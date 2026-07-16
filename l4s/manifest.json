@@ -9,7 +9,7 @@
     "upstream_url": "https://github.com/private-octopus/picoquic",
     "fork_url": "https://github.com/Arman17Babaei/picoquic.git",
     "pinned_revision": "13671ce7bdf58c278a29da2d49a32f76c21d6c6d",
-    "local_revision": "04ee27f57212064ec0f2ada2ec3dbf2f7d1fe255",
+    "local_revision": "581b2841c2d651a045985999a1e319c64996ff58",
     "local_branch": "codex/prague-params",
     "path": ".deps/picoquic-l4s",
     "tracking": "git-submodule",
@@ -34,7 +34,7 @@
   "commands": {
     "picoquic_configure": "cmake -S . -B . -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=Y -DCMAKE_BUILD_TYPE=RelWithDebInfo",
     "picoquic_build": "cmake --build . -j$(nproc)",
-    "picoquic_test": "ctest --test-dir build-l4s --output-on-failure",
+    "picoquic_test": "./picoquic_ct prague_dynamics && ctest --output-on-failure",
     "profile_render": "python3 tools/l4s/prague_profile.py render-options config/l4s-prague.yaml picoquic-observed-default",
     "imquic_configure": "./configure --with-picoquic=$PWD/.deps/picoquic-l4s",
     "imquic_build": "make -j$(nproc)",

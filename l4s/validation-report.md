@@ -7,6 +7,7 @@ Date: 2026-07-16
 - IMQUIC base: `0b4def337956f039753f9358fbdd194db0311e8d`
 - IMQUIC environment commit: `c903440b7520c5bd6fe202fe6eaf991af78ad271`
 - IMQUIC Prague feature commit: `21edc9cc0db447f45ff041427f9f0f8814d03357`
+- IMQUIC dynamics pin commit: `648ab2809b14a3fd293c6446263c32e44e9a9d63`
 - IMQUIC branch: `codex/imquic-l4s-prague`
 - IMQUIC fork: `https://github.com/Arman17Babaei/imquic.git`
 - picoquic upstream: `https://github.com/private-octopus/picoquic`
@@ -14,6 +15,7 @@ Date: 2026-07-16
 - picoquic pin: `13671ce7bdf58c278a29da2d49a32f76c21d6c6d`
 - picoquic parameter commit: `bbe86f4e6b9d08524a920cac852889dc5ac06496`
 - picoquic metrics commit: `04ee27f57212064ec0f2ada2ec3dbf2f7d1fe255`
+- picoquic dynamics test commit: `581b2841c2d651a045985999a1e319c64996ff58`
 - picoquic local branch: `codex/prague-params`
 - picoquic tracking: Git submodule at `.deps/picoquic-l4s`
 - picotls pin: `bfa67875982afc4c24f21e146cef4747fa189c2f`
@@ -50,8 +52,19 @@ ctest --test-dir build-l4s --output-on-failure
 ```
 
 Result: picoquic built successfully; `picoquic_ct` and `picohttp_ct` passed
-(2/2, 48.10 seconds). The focused `prague_options` test and the existing
-`l4s_prague` simulation also passed.
+(2/2, 22.16 seconds). The focused `prague_options`, `prague_dynamics`, and
+existing `l4s_prague` simulation also passed.
+
+The deterministic synthetic traffic sample can be run directly:
+
+```sh
+./picoquic_ct prague_dynamics
+```
+
+It covers an unmarked ECT(1) epoch, a 75 ECT(1)/25 CE epoch, and a 40 ECT(1)/60
+CE sudden-marking epoch. Exact fixed-point assertions cover default and fast
+`alpha_gain`, default and gentle `ce_response`, default and gentle `loss_beta`,
+the `sudden_ce_threshold`, and the pinned upstream default formulas.
 
 The dependency was also built in place with PIC so the current IMQUIC static-library discovery can link it:
 
@@ -91,10 +104,10 @@ Result: validation passed and produced the normalized string shown above.
 - ECT(1) packet evidence: not collected.
 - CE marking evidence: not collected.
 - QUIC ACK ECN feedback evidence: not collected.
-- Prague alpha evidence: not collected.
-- Congestion-window response: not measured.
+- Prague alpha evidence: deterministic synthetic epoch vectors passed; live network samples were not collected.
+- Congestion-window response: deterministic fixed-point vectors passed; live network response was not measured.
 - Privileged namespace and DualPI2 validation was unavailable because the session was not root.
-- DualPI2 availability was not established; no classic ECN AQM was substituted.
+- The `sch_dualpi2` kernel module is installed, but no privileged topology was created; no classic ECN AQM was substituted.
 
 > Build and structural validation completed. Packet-level L4S validation was not performed because the required Linux namespace, DualPI2, privilege, or capture capability was unavailable.
 
@@ -105,9 +118,7 @@ received CE feedback, or responded as an L4S flow.
 
 ## Remaining work
 
-1. Add deterministic state-transition vectors that isolate changed
-   `alpha_gain`, `ce_response`, `loss_beta`, and `sudden_ce_threshold` profiles.
-2. Run packet marking, feedback, and congestion-response validation on a
+1. Run packet marking, feedback, and congestion-response validation on a
    root-capable Linux host with DualPI2.
 
 ## Scientific and standards basis
