@@ -8,6 +8,7 @@ Date: 2026-07-16
 - IMQUIC environment commit: `c903440b7520c5bd6fe202fe6eaf991af78ad271`
 - IMQUIC Prague feature commit: `21edc9cc0db447f45ff041427f9f0f8814d03357`
 - IMQUIC dynamics pin commit: `648ab2809b14a3fd293c6446263c32e44e9a9d63`
+- IMQUIC loopback traffic commit: `dc626ee28b820dde185ad7b7786ae14747960c00`
 - IMQUIC branch: `codex/imquic-l4s-prague`
 - IMQUIC fork: `https://github.com/Arman17Babaei/imquic.git`
 - picoquic upstream: `https://github.com/private-octopus/picoquic`
@@ -86,8 +87,20 @@ make check
 ```
 
 Result: configuration, compilation, and linking passed. The added
-`imquic-l4s-test` passed (1/1), proving invalid Prague options reject endpoint
-creation and the default rendered profile creates a Prague endpoint.
+`imquic-l4s-test` passed (1/1). It proves invalid Prague options reject endpoint
+creation, then creates Prague server/client endpoints on IPv4 loopback, sends a
+deterministic 256 KiB bidirectional STREAM payload, echoes and byte-validates all
+262144 bytes, and obtains a populated Prague transport-metrics snapshot.
+
+A representative run reported:
+
+```text
+IMQUIC Prague traffic: sent=262144, echoed=262144, rtt_us=706,
+cwin=125008, pacing_Bps=221331444, ect1=0, ce=0, alpha=0/1
+```
+
+RTT, congestion window, and pacing values vary by run. Zero ECT(1)/CE counters
+on this unshaped loopback run are not packet-marking evidence.
 
 Profile validation:
 
@@ -112,9 +125,10 @@ Result: validation passed and produced the normalized string shown above.
 > Build and structural validation completed. Packet-level L4S validation was not performed because the required Linux namespace, DualPI2, privilege, or capture capability was unavailable.
 
 The current evidence level is **Build and structural**. It proves typed Prague
-selection, option propagation, ECT(1)-capable controller selection, and stable
-metrics accessors. It is not packet evidence that this host emitted ECT(1),
-received CE feedback, or responded as an L4S flow.
+selection, option propagation, ECT(1)-capable controller selection, stable
+metrics accessors, and real IMQUIC QUIC payload generation over loopback. It is
+not packet evidence that this host emitted ECT(1), received CE feedback, or
+responded as an L4S flow.
 
 ## Remaining work
 
