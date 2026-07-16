@@ -125,14 +125,18 @@ l4s-sender (10.10.1.2) -- l4s-router -- (10.10.2.2) l4s-receiver
                   HTB 2 Mbit/s + DualPI2 on both egress links
 ```
 
-The complete experiment and analysis now run as one command on a root-capable
-Prague/DualPI2 host or guest:
+The complete experiment and analysis run as one unprivileged host command. It
+boots an ephemeral overlay of `~/sandbox/p4/work.qcow2`; root-only namespaces,
+DualPI2, and packet capture run exclusively inside that guest:
 
 ```sh
-sudo make l4s-timeseries-check
+make l4s-timeseries-check
 ```
 
-`tools/l4s/run_timeseries_test.sh` creates and cleans the three namespaces,
+`tools/l4s/run_qemu_timeseries_test.py` refuses a dirty worktree, creates the
+overlay, transfers archived IMQUIC and picoquic revisions, provisions and
+builds the disposable guest, retrieves results, shuts QEMU down, and removes
+the overlay even on failure. `tools/l4s/run_timeseries_test.sh` then creates and cleans the three namespaces,
 configures the two shaped DualPI2 egress links, starts packet capture, runs the
 Prague-configured IMQUIC server and client, records transport metrics every
 10 ms, and invokes `tools/l4s/analyze_timeseries.py`. Results are written below

@@ -6,6 +6,7 @@ DISTCHECK_CONFIGURE_FLAGS = --disable-docs
 EXTRA_DIST = \
 	imquic.pc.in \
 	tools/l4s/analyze_timeseries.py \
+	tools/l4s/run_qemu_timeseries_test.py \
 	tools/l4s/run_timeseries_test.sh
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = imquic.pc
@@ -19,4 +20,8 @@ FORCE:
 
 .PHONY: l4s-timeseries-check
 l4s-timeseries-check:
-	$(top_srcdir)/tools/l4s/run_timeseries_test.sh
+	python3 $(top_srcdir)/tools/l4s/run_qemu_timeseries_test.py
+
+.PHONY: l4s-timeseries-guest-check
+l4s-timeseries-guest-check:
+	$(top_srcdir)/tools/l4s/run_timeseries_test.sh $(L4S_RESULT_DIR)
