@@ -9,6 +9,7 @@
     "upstream_url": "https://github.com/private-octopus/picoquic",
     "fork_url": "https://github.com/Arman17Babaei/picoquic.git",
     "pinned_revision": "13671ce7bdf58c278a29da2d49a32f76c21d6c6d",
+    "local_revision": "04ee27f57212064ec0f2ada2ec3dbf2f7d1fe255",
     "local_branch": "codex/prague-params",
     "path": ".deps/picoquic-l4s",
     "tracking": "git-submodule",
