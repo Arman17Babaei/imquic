@@ -98,7 +98,11 @@ IMQUIC_MANUAL_LIBS="${IMQUIC_MANUAL_LIBS} -lm"
 AC_SUBST(IMQUIC_MANUAL_LIBS)
 
 ROOT_FOLDER=$(cd $srcdir && pwd)
-PICOQUIC_DIR="$ROOT_FOLDER/picoquic"
+AC_ARG_WITH([picoquic],
+            [AS_HELP_STRING([--with-picoquic=PATH],
+                            [Use picoquic built in PATH @<:@default=ROOT/picoquic@:>@])],
+            [PICOQUIC_DIR=$(cd "$withval" 2>/dev/null && pwd) || AC_MSG_ERROR([invalid picoquic path: $withval])],
+            [PICOQUIC_DIR="$ROOT_FOLDER/picoquic"])
 PICOTLS_DIR="$PICOQUIC_DIR/_deps/picotls-build/"
 PICOQUIC_CFLAGS="-I$PICOQUIC_DIR/picoquic -I$PICOQUIC_DIR/loglib"
 AC_SUBST(PICOQUIC_CFLAGS)

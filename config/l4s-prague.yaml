@@ -1,0 +1,20 @@
+# Strict YAML subset consumed by tools/l4s/prague_profile.py.
+# These are experiment profiles, not universal recommended values.
+version: 1
+default_profile: picoquic-observed-default
+profiles:
+  picoquic-observed-default:
+    alpha_gain: 1/16
+    ce_response: 1/2
+    loss_beta: 1/2
+    sudden_ce_threshold: 1/2
+  gentle-response:
+    alpha_gain: 1/32
+    ce_response: 1/4
+    loss_beta: 3/4
+    sudden_ce_threshold: 2/3
+  fast-estimator:
+    alpha_gain: 1/8
+    ce_response: 1/2
+    loss_beta: 1/2
+    sudden_ce_threshold: 1/2

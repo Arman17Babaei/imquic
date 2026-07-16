@@ -1,0 +1,30 @@
+{
+  "capabilities": {
+    "linux": true,
+    "network_namespaces": true,
+    "packet_capture": true,
+    "root": false,
+    "traffic_control": true
+  },
+  "git": {
+    "available": true,
+    "branch": "main",
+    "clean": true,
+    "head": "0b4def337956f039753f9358fbdd194db0311e8d",
+    "status": []
+  },
+  "is_imquic": true,
+  "repository": "/home/arman-babaei/sharif/thesis/imquic",
+  "tools": {
+    "autoconf": "/usr/bin/autoconf",
+    "automake": "/usr/bin/automake",
+    "cmake": "/usr/bin/cmake",
+    "git": "/usr/bin/git",
+    "ip": "/usr/sbin/ip",
+    "make": "/usr/bin/make",
+    "pkg-config": "/usr/bin/pkg-config",
+    "tc": "/usr/sbin/tc",
+    "tcpdump": "/usr/bin/tcpdump",
+    "tshark": "/usr/bin/tshark"
+  }
+}

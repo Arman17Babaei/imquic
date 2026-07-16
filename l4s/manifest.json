@@ -1,0 +1,39 @@
+{
+  "imquic": {
+    "upstream_url": "https://github.com/meetecho/imquic",
+    "base_revision": "0b4def337956f039753f9358fbdd194db0311e8d",
+    "branch": "codex/imquic-l4s-prague"
+  },
+  "picoquic": {
+    "upstream_url": "https://github.com/private-octopus/picoquic",
+    "pinned_revision": "13671ce7bdf58c278a29da2d49a32f76c21d6c6d",
+    "local_branch": "codex/prague-params",
+    "path": ".deps/picoquic-l4s",
+    "dirty": false,
+    "picotls_revision": "bfa67875982afc4c24f21e146cef4747fa189c2f"
+  },
+  "profile": {
+    "name": "picoquic-observed-default",
+    "alpha_gain": "1/16",
+    "ce_response": "1/2",
+    "loss_beta": "1/2",
+    "sudden_ce_threshold": "1/2"
+  },
+  "toolchain": {
+    "compiler": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+    "cmake": "3.28.3",
+    "autoconf": "2.71",
+    "automake": "1.16.5",
+    "kernel": "Linux 6.17.0-35-generic #35~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Tue May 26 19:30:42 UTC 2 GNU/Linux",
+    "tc": "iproute2-6.1.0, libbpf 1.3.0"
+  },
+  "commands": {
+    "picoquic_configure": "cmake -S . -B . -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=Y -DCMAKE_BUILD_TYPE=RelWithDebInfo",
+    "picoquic_build": "cmake --build . -j$(nproc)",
+    "picoquic_test": "ctest --test-dir build-l4s --output-on-failure",
+    "profile_render": "python3 tools/l4s/prague_profile.py render-options config/l4s-prague.yaml picoquic-observed-default",
+    "imquic_configure": "./configure --with-picoquic=$PWD/.deps/picoquic-l4s",
+    "imquic_build": "make -j$(nproc)",
+    "imquic_test": "make check"
+  }
+}
