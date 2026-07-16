@@ -73,7 +73,7 @@ check_PROGRAMS = imquic-l4s-test
 TESTS = $(check_PROGRAMS)
 imquic_l4s_test_SOURCES = l4s-test.c
 imquic_l4s_test_CFLAGS = $(AM_CFLAGS) $(IMQUIC_CFLAGS)
-imquic_l4s_test_LDADD = libimquic.la
+imquic_l4s_test_LDADD = libimquic.la $(IMQUIC_LIBS)
 
 directory = ../.git
 dir_target = $(directory)-$(wildcard $(directory))
