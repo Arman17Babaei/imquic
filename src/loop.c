@@ -54,10 +54,29 @@ static void imquic_network_endpoint_receive(imquic_network_endpoint *ne) {
 	uint8_t buffer[4906];
 	imquic_network_address sender = { 0 };
 	sender.addrlen = sizeof(sender.addr);
-	int len = recvfrom(ne->fd, buffer, sizeof(buffer), 0, (struct sockaddr *)&sender.addr, &sender.addrlen);
+	char control[CMSG_SPACE(sizeof(int))] = { 0 };
+	struct iovec iov = { .iov_base = buffer, .iov_len = sizeof(buffer) };
+	struct msghdr msg = {
+		.msg_name = &sender.addr,
+		.msg_namelen = sender.addrlen,
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
+		.msg_control = control,
+		.msg_controllen = sizeof(control)
+	};
+	uint8_t ecn = 0;
+	int len = recvmsg(ne->fd, &msg, 0);
+	sender.addrlen = msg.msg_namelen;
+	for(struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
+			cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+		if(cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_TOS)
+			ecn = (*(uint8_t *)CMSG_DATA(cmsg)) & 0x03;
+		else if(cmsg->cmsg_level == IPPROTO_IPV6 && cmsg->cmsg_type == IPV6_TCLASS)
+			ecn = (*(int *)CMSG_DATA(cmsg)) & 0x03;
+	}
 	if(len > 0) {
 		IMQUIC_LOG(IMQUIC_LOG_HUGE, "[%s] Received %d bytes\n", ne->name, len);
-		imquic_quic_incoming_packet(ne, buffer, len, &sender);
+		imquic_quic_incoming_packet(ne, buffer, len, &sender, ecn);
 	}
 }
 static gboolean imquic_network_source_prepare(GSource *source, gint *timeout) {

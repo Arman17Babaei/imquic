@@ -112,28 +112,67 @@ python3 tools/l4s/prague_profile.py render-options \
 
 Result: validation passed and produced the normalized string shown above.
 
-## L4S evidence and limitations
+## Privileged QEMU packet validation
 
-- ECT(1) packet evidence: not collected.
-- CE marking evidence: not collected.
-- QUIC ACK ECN feedback evidence: not collected.
-- Prague alpha evidence: deterministic synthetic epoch vectors passed; live network samples were not collected.
-- Congestion-window response: deterministic fixed-point vectors passed; live network response was not measured.
-- Privileged namespace and DualPI2 validation was unavailable because the session was not root.
-- The `sch_dualpi2` kernel module is installed, but no privileged topology was created; no classic ECN AQM was substituted.
+Packet validation ran in an ephemeral qcow2 overlay backed by `work.qcow2`; the
+base image was not modified. The guest ran kernel
+`5.15.72-48b3db6b4-prague-111` and loaded its real `sch_dualpi2` module. Three
+network namespaces formed this routed topology:
 
-> Build and structural validation completed. Packet-level L4S validation was not performed because the required Linux namespace, DualPI2, privilege, or capture capability was unavailable.
+```text
+l4s-sender (10.10.1.2) -- l4s-router -- (10.10.2.2) l4s-receiver
+                                |
+                  HTB 2 Mbit/s + DualPI2 on both egress links
+```
 
-The current evidence level is **Build and structural**. It proves typed Prague
-selection, option propagation, ECT(1)-capable controller selection, stable
-metrics accessors, and real IMQUIC QUIC payload generation over loopback. It is
-not packet evidence that this host emitted ECT(1), received CE feedback, or
-responded as an L4S flow.
+The complete experiment and analysis now run as one command on a root-capable
+Prague/DualPI2 host or guest:
+
+```sh
+sudo make l4s-timeseries-check
+```
+
+`tools/l4s/run_timeseries_test.sh` creates and cleans the three namespaces,
+configures the two shaped DualPI2 egress links, starts packet capture, runs the
+Prague-configured IMQUIC server and client, records transport metrics every
+10 ms, and invokes `tools/l4s/analyze_timeseries.py`. Results are written below
+the ignored `results/l4s/` directory.
+
+The analyzer is part of `make check` through a deterministic positive and
+negative self-test. On live data it requires strictly increasing timestamps,
+monotonic ECT(1)/CE feedback counters, nonzero ECT(1) and CE, evolving Prague
+alpha and congestion window, and at least one CE-associated window reduction.
+The runner independently fails if its packet captures contain no ECT(1) or CE.
+
+A fresh ephemeral QEMU run produced:
+
+```json
+{
+  "alpha_states": 27,
+  "ce_associated_cwnd_reduction": true,
+  "cwnd_max_bytes": 19627,
+  "cwnd_min_bytes": 3120,
+  "duration_us": 1601222,
+  "final_ce_packets": 170,
+  "final_ect1_packets": 155,
+  "samples": 157,
+  "status": "pass"
+}
+```
+
+The compact live CSV, JSON result, packet counts, qdisc counters, and endpoint
+logs are retained in `l4s/qemu-evidence/`. Full captures from future runs stay
+under `results/l4s/` rather than being added to Git.
+
+The current evidence level is **Live Prague response**. The deterministic
+picoquic test asserts exact controller arithmetic; the time-series test asserts
+the live ordering and direction of ECT(1), CE feedback, alpha evolution, and
+congestion-window response without making timing-fragile exact-value claims.
 
 ## Remaining work
 
-1. Run packet marking, feedback, and congestion-response validation on a
-   root-capable Linux host with DualPI2.
+None for the requested single-profile live trajectory. Profile comparisons can
+be added later as a separate experiment matrix.
 
 ## Scientific and standards basis
 

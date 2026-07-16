@@ -25,6 +25,8 @@
 #include <net/if.h>
 
 #include "internal/network.h"
+
+#include <errno.h>
 #include "internal/loop.h"
 #include "internal/quic.h"
 #include "internal/utils.h"
@@ -378,6 +380,21 @@ imquic_network_endpoint *imquic_network_endpoint_create(imquic_configuration *co
 		IMQUIC_LOG(IMQUIC_LOG_ERR, "[%s] Cannot create socket... %d (%s)\n",
 			config->name, errno, g_strerror(errno));
 		return NULL;
+	}
+	if(config->congestion_controller == IMQUIC_CONGESTION_PRAGUE) {
+		int ecn = 1;
+		int receive_ecn = 1;
+		int level = family == AF_INET ? IPPROTO_IP : IPPROTO_IPV6;
+		int send_option = family == AF_INET ? IP_TOS : IPV6_TCLASS;
+		int receive_option = family == AF_INET ? IP_RECVTOS : IPV6_RECVTCLASS;
+		if(setsockopt(quic_fd, level, send_option, &ecn, sizeof(ecn)) != 0 ||
+				setsockopt(quic_fd, level, receive_option, &receive_ecn,
+					sizeof(receive_ecn)) != 0) {
+			IMQUIC_LOG(IMQUIC_LOG_ERR, "[%s] Failed to enable Prague ECN: %d (%s)\n",
+				config->name, errno, g_strerror(errno));
+			close(quic_fd);
+			return NULL;
+		}
 	}
 	int v6only = 0;
 	if(family != AF_INET && both && setsockopt(quic_fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only)) != 0) {

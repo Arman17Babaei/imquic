@@ -36,7 +36,8 @@ int imquic_quic_create_context(imquic_network_endpoint *endpoint, imquic_configu
  * @param buffer The message data
  * @param len The message size
  * @param sender The imquic_network_address the message came from */
-void imquic_quic_incoming_packet(imquic_network_endpoint *endpoint, uint8_t *buffer, size_t len, imquic_network_address *sender);
+void imquic_quic_incoming_packet(imquic_network_endpoint *endpoint, uint8_t *buffer,
+	size_t len, imquic_network_address *sender, uint8_t ecn);
 
 /*! \brief Callback fired when there's a queued event to process for a
  * connection, to process and trigger via picoquic in a thread-safe way

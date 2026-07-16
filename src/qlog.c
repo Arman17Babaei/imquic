@@ -18,6 +18,8 @@
 #include <unistd.h>
 
 #include "internal/qlog.h"
+
+#include <errno.h>
 #include "internal/connection.h"
 #include "internal/version.h"
 #include "imquic/debug.h"

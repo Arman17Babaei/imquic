@@ -206,13 +206,14 @@ int imquic_get_transport_metrics(imquic_connection *conn,
 }
 
 /* Process incoming packets and pass them to picoquic */
-void imquic_quic_incoming_packet(imquic_network_endpoint *endpoint, uint8_t *buffer, size_t len, imquic_network_address *sender) {
+void imquic_quic_incoming_packet(imquic_network_endpoint *endpoint, uint8_t *buffer,
+		size_t len, imquic_network_address *sender, uint8_t ecn) {
 	if(endpoint == NULL || buffer == NULL || len == 0 || sender == NULL)
 		return;
 	/* Invoke the callback function for parsing the QUIC message */
 	int ret = picoquic_incoming_packet(endpoint->qc, buffer, len,
 		(struct sockaddr *)&sender->addr, (struct sockaddr *)&endpoint->local_address.addr,
-		0, 0, picoquic_current_time());
+		0, ecn, picoquic_current_time());
 	if(ret < 0)
 		IMQUIC_LOG(IMQUIC_LOG_WARN, "[%s] Error processing incoming QUIC message: %d\n", endpoint->name, ret);
 }

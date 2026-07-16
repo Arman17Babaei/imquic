@@ -52,6 +52,7 @@ test-driver
 /.deps/*
 !/.deps/picoquic-l4s
 .dirstamp
+results/l4s/
 
 # OS X
 .DS_Store
