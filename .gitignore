@@ -43,7 +43,10 @@ imquic.pc
 *.la
 .libs
 
-.deps
+.deps/
+!/.deps/
+/.deps/*
+!/.deps/picoquic-l4s
 .dirstamp
 
 # OS X

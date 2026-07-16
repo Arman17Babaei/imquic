@@ -10,9 +10,16 @@ Date: 2026-07-16
 - picoquic upstream: `https://github.com/private-octopus/picoquic`
 - picoquic pin: `13671ce7bdf58c278a29da2d49a32f76c21d6c6d`
 - picoquic local branch: `codex/prague-params`
+- picoquic tracking: Git submodule at `.deps/picoquic-l4s`
 - picotls pin: `bfa67875982afc4c24f21e146cef4747fa189c2f`
 
 Both repositories were clean when the results below were recorded.
+
+Initialize the tracked dependency in a fresh checkout with:
+
+```sh
+git submodule update --init --recursive
+```
 
 ## Selected profile
 

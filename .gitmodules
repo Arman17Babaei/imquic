@@ -1,0 +1,3 @@
+[submodule ".deps/picoquic-l4s"]
+	path = .deps/picoquic-l4s
+	url = https://github.com/private-octopus/picoquic

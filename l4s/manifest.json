@@ -9,6 +9,7 @@
     "pinned_revision": "13671ce7bdf58c278a29da2d49a32f76c21d6c6d",
     "local_branch": "codex/prague-params",
     "path": ".deps/picoquic-l4s",
+    "tracking": "git-submodule",
     "dirty": false,
     "picotls_revision": "bfa67875982afc4c24f21e146cef4747fa189c2f"
   },
