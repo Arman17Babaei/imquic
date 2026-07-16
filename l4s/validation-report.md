@@ -7,7 +7,9 @@ Date: 2026-07-16
 - IMQUIC base: `0b4def337956f039753f9358fbdd194db0311e8d`
 - IMQUIC environment commit: `c903440b7520c5bd6fe202fe6eaf991af78ad271`
 - IMQUIC branch: `codex/imquic-l4s-prague`
+- IMQUIC fork: `https://github.com/Arman17Babaei/imquic.git`
 - picoquic upstream: `https://github.com/private-octopus/picoquic`
+- picoquic fork: `https://github.com/Arman17Babaei/picoquic.git`
 - picoquic pin: `13671ce7bdf58c278a29da2d49a32f76c21d6c6d`
 - picoquic local branch: `codex/prague-params`
 - picoquic tracking: Git submodule at `.deps/picoquic-l4s`

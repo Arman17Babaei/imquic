@@ -1,11 +1,13 @@
 {
   "imquic": {
     "upstream_url": "https://github.com/meetecho/imquic",
+    "fork_url": "https://github.com/Arman17Babaei/imquic.git",
     "base_revision": "0b4def337956f039753f9358fbdd194db0311e8d",
     "branch": "codex/imquic-l4s-prague"
   },
   "picoquic": {
     "upstream_url": "https://github.com/private-octopus/picoquic",
+    "fork_url": "https://github.com/Arman17Babaei/picoquic.git",
     "pinned_revision": "13671ce7bdf58c278a29da2d49a32f76c21d6c6d",
     "local_branch": "codex/prague-params",
     "path": ".deps/picoquic-l4s",
