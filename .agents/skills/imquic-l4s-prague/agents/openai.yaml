@@ -1,0 +1,6 @@
+interface:
+  display_name: "IMQUIC L4S Prague"
+  short_description: "Patch IMQUIC and a managed picoquic fork for reproducible Prague/L4S experiments."
+  default_prompt: "Use $imquic-l4s-prague to inspect this IMQUIC checkout, create a local picoquic fork, expose configurable Prague profiles, and validate the result without pushing."
+policy:
+  allow_implicit_invocation: true
