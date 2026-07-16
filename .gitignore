@@ -42,6 +42,10 @@ imquic.pc
 *.lo
 *.la
 .libs
+*.log
+*.trs
+imquic-l4s-test
+test-driver
 
 .deps/
 !/.deps/

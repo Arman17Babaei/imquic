@@ -14,6 +14,8 @@
 
 #include <glib.h>
 
+#include "../imquic/imquic.h"
+
 /*! \brief imquic initialization state */
 typedef enum imquic_init_state {
 	IMQUIC_UNINITIALIZED = -1,
@@ -67,6 +69,10 @@ typedef struct imquic_configuration {
 	gboolean cert_no_verify;
 	/*! \brief Whether early data should be supported */
 	gboolean early_data;
+	/*! Congestion controller selected for new connections */
+	imquic_congestion_controller congestion_controller;
+	/*! Controller-specific option string */
+	const char *congestion_options;
 	/*! \brief File to use for session tickets, when doing early data */
 	const char *ticket_file;
 	/*! \brief MoQ version to negotiate, if any */

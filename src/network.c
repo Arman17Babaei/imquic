@@ -123,6 +123,7 @@ static void imquic_network_endpoint_free(const imquic_refcount *ne_ref) {
 	g_free(ne->h3_path);
 	g_strfreev(ne->wt_protocols);
 	g_free(ne->qlog_path);
+	g_free(ne->congestion_options);
 	g_hash_table_unref(ne->connections);
 	g_hash_table_unref(ne->connections_by_cnx);
 	if(ne->fd > -1)
@@ -410,6 +411,8 @@ imquic_network_endpoint *imquic_network_endpoint_create(imquic_configuration *co
 	ne->is_server = config->is_server;
 	ne->fd = quic_fd;
 	ne->port = port;
+	ne->congestion_controller = config->congestion_controller;
+	ne->congestion_options = g_strdup(config->congestion_options);
 	if(family == AF_INET) {
 		ne->local_address.addrlen = sizeof(address);
 		memcpy(&ne->local_address.addr, &address, ne->local_address.addrlen);
@@ -506,4 +509,3 @@ int imquic_network_send_packet(imquic_network_endpoint *ne) {
 	imquic_quic_next_step(ne);
 	return G_SOURCE_REMOVE;
 }
-

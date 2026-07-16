@@ -183,6 +183,30 @@ typedef struct imquic_network_endpoint imquic_server;
 typedef struct imquic_network_endpoint imquic_client;
 typedef struct imquic_network_endpoint imquic_endpoint;
 
+/*! Congestion controllers selectable for an endpoint */
+typedef enum imquic_congestion_controller {
+	IMQUIC_CONGESTION_DEFAULT = 0,
+	IMQUIC_CONGESTION_RENO,
+	IMQUIC_CONGESTION_BBR,
+	IMQUIC_CONGESTION_PRAGUE,
+} imquic_congestion_controller;
+
+/*! Stable snapshot of transport and Prague state */
+typedef struct imquic_transport_metrics {
+	uint64_t smoothed_rtt_us;
+	uint64_t min_rtt_us;
+	uint64_t congestion_window_bytes;
+	uint64_t bytes_in_flight;
+	uint64_t pacing_rate_bytes_per_second;
+	uint64_t ect1_packets;
+	uint64_t ce_packets;
+	uint32_t prague_alpha_numerator;
+	uint32_t prague_alpha_denominator;
+} imquic_transport_metrics;
+
+int imquic_get_transport_metrics(imquic_connection *conn,
+	imquic_transport_metrics *metrics);
+
 /** @name Library initialization
  */
 ///@{
@@ -333,6 +357,10 @@ typedef enum imquic_config {
 	IMQUIC_CONFIG_MOQ_VERSION,
 	/*! \brief Whether MoQ SETUP messages should include GREASE options (ignored before v17) */
 	IMQUIC_CONFIG_MOQ_GREASE,
+	/*! Congestion controller (imquic_congestion_controller) */
+	IMQUIC_CONFIG_CONGESTION_CONTROL,
+	/*! Controller-specific option string */
+	IMQUIC_CONFIG_CONGESTION_OPTIONS,
 	/*! \brief Generic user data, if any (void pointer) */
 	IMQUIC_CONFIG_USER_DATA,
 	/*! \brief Must be the last property, followed by NULL */

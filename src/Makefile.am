@@ -69,6 +69,12 @@ libimquic_la_LIBADD = \
 
 BUILT_SOURCES = version.c
 
+check_PROGRAMS = imquic-l4s-test
+TESTS = $(check_PROGRAMS)
+imquic_l4s_test_SOURCES = l4s-test.c
+imquic_l4s_test_CFLAGS = $(AM_CFLAGS) $(IMQUIC_CFLAGS)
+imquic_l4s_test_LDADD = libimquic.la
+
 directory = ../.git
 dir_target = $(directory)-$(wildcard $(directory))
 dir_present = $(directory)-$(directory)

@@ -205,6 +205,10 @@ const char *imquic_config_str(imquic_config type) {
 			return "IMQUIC_CONFIG_MOQ_VERSION";
 		case IMQUIC_CONFIG_MOQ_GREASE:
 			return "IMQUIC_CONFIG_MOQ_GREASE";
+		case IMQUIC_CONFIG_CONGESTION_CONTROL:
+			return "IMQUIC_CONFIG_CONGESTION_CONTROL";
+		case IMQUIC_CONFIG_CONGESTION_OPTIONS:
+			return "IMQUIC_CONFIG_CONGESTION_OPTIONS";
 		case IMQUIC_CONFIG_USER_DATA:
 			return "IMQUIC_CONFIG_USER_DATA";
 		case IMQUIC_CONFIG_DONE:
@@ -292,6 +296,10 @@ imquic_server *imquic_create_server(const char *name, ...) {
 		} else if(property == IMQUIC_CONFIG_MOQ_GREASE) {
 			IMQUIC_LOG(IMQUIC_LOG_WARN, "%s is ignored when creating generic endpoints\n", imquic_config_str(property));
 			va_arg(args, gboolean);
+		} else if(property == IMQUIC_CONFIG_CONGESTION_CONTROL) {
+			config.congestion_controller = va_arg(args, int);
+		} else if(property == IMQUIC_CONFIG_CONGESTION_OPTIONS) {
+			config.congestion_options = va_arg(args, char *);
 		} else if(property == IMQUIC_CONFIG_USER_DATA) {
 			config.user_data = va_arg(args, void *);
 		} else {
@@ -378,6 +386,10 @@ imquic_client *imquic_create_client(const char *name, ...) {
 		} else if(property == IMQUIC_CONFIG_MOQ_GREASE) {
 			IMQUIC_LOG(IMQUIC_LOG_WARN, "%s is ignored when creating generic endpoints\n", imquic_config_str(property));
 			va_arg(args, gboolean);
+		} else if(property == IMQUIC_CONFIG_CONGESTION_CONTROL) {
+			config.congestion_controller = va_arg(args, int);
+		} else if(property == IMQUIC_CONFIG_CONGESTION_OPTIONS) {
+			config.congestion_options = va_arg(args, char *);
 		} else if(property == IMQUIC_CONFIG_USER_DATA) {
 			config.user_data = va_arg(args, void *);
 		} else {

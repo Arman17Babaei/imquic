@@ -10,8 +10,9 @@
 
 #include <picoquic.h>
 #include <picoquic_config.h>
-#include <picoquic_internal.h>
+#include <picoquic_prague.h>
 #include <autoqlog.h>
+#include <string.h>
 
 #include "internal/quic.h"
 #include "internal/qlog.h"
@@ -114,6 +115,23 @@ int imquic_quic_create_context(imquic_network_endpoint *endpoint, imquic_configu
 		return -1;
 	picoquic_quic_config_t piconfig;
 	picoquic_config_init(&piconfig);
+	if(config->congestion_controller == IMQUIC_CONGESTION_RENO) {
+		piconfig.cc_algo_id = "reno";
+	} else if(config->congestion_controller == IMQUIC_CONGESTION_BBR) {
+		piconfig.cc_algo_id = "bbr";
+	} else if(config->congestion_controller == IMQUIC_CONGESTION_PRAGUE) {
+		picoquic_prague_parameters_t parameters;
+		if(picoquic_prague_parse_options(endpoint->congestion_options, &parameters) != 0) {
+			IMQUIC_LOG(IMQUIC_LOG_ERR, "[%s] Invalid Prague congestion options\n", config->name);
+			return -1;
+		}
+		piconfig.cc_algo_id = "prague";
+	} else if(config->congestion_controller != IMQUIC_CONGESTION_DEFAULT) {
+		IMQUIC_LOG(IMQUIC_LOG_ERR, "[%s] Invalid congestion controller: %d\n",
+			config->name, config->congestion_controller);
+		return -1;
+	}
+	piconfig.cc_algo_option_string = endpoint->congestion_options;
 	if(endpoint->is_server) {
 		piconfig.server_port = config->local_port;
 		piconfig.server_cert_file = config->cert_pem;
@@ -162,6 +180,28 @@ int imquic_quic_create_context(imquic_network_endpoint *endpoint, imquic_configu
 		picoquic_set_log_level(endpoint->qc, 1);
 	}
 	/* Done */
+	return 0;
+}
+
+int imquic_get_transport_metrics(imquic_connection *conn,
+		imquic_transport_metrics *metrics) {
+	if(conn == NULL || conn->piconn == NULL || metrics == NULL)
+		return -1;
+	picoquic_path_quality_t quality = { 0 };
+	picoquic_prague_metrics_t prague = { 0 };
+	picoquic_get_default_path_quality(conn->piconn, &quality);
+	memset(metrics, 0, sizeof(*metrics));
+	metrics->smoothed_rtt_us = quality.rtt;
+	metrics->min_rtt_us = quality.rtt_min;
+	metrics->congestion_window_bytes = quality.cwin;
+	metrics->bytes_in_flight = quality.bytes_in_transit;
+	metrics->pacing_rate_bytes_per_second = quality.pacing_rate;
+	if(picoquic_prague_get_metrics(conn->piconn, &prague) == 0) {
+		metrics->ect1_packets = prague.ect1_packets;
+		metrics->ce_packets = prague.ce_packets;
+		metrics->prague_alpha_numerator = prague.alpha_numerator;
+		metrics->prague_alpha_denominator = prague.alpha_denominator;
+	}
 	return 0;
 }
 
@@ -334,11 +374,7 @@ static int imquic_quic_stream_callback(picoquic_cnx_t *pconn,
 			imquic_connection_notify_stream_incoming(conn, stream, bytes, blen);
 		}
 	} else if(fin_or_event == picoquic_callback_stream_reset) {
-		/* Use the picoquic internal API to obtain the error_code */
-		uint64_t error_code = 0;
-		picoquic_stream_head_t *ps = picoquic_find_stream(pconn, stream_id);
-		if(ps != NULL)
-			error_code = ps->remote_error;
+		uint64_t error_code = picoquic_get_remote_stream_error(pconn, stream_id);
 		/* Update the local state of the stream */
 		imquic_mutex_lock(&conn->mutex);
 		imquic_stream *stream = g_hash_table_lookup(conn->streams, &stream_id);
@@ -352,11 +388,7 @@ static int imquic_quic_stream_callback(picoquic_cnx_t *pconn,
 		if(endpoint->reset_stream_incoming)
 			endpoint->reset_stream_incoming(conn, stream_id, error_code);
 	} else if(fin_or_event == picoquic_callback_stop_sending) {
-		/* Use the picoquic internal API to obtain the error_code */
-		uint64_t error_code = 0;
-		picoquic_stream_head_t *ps = picoquic_find_stream(pconn, stream_id);
-		if(ps != NULL)
-			error_code = ps->remote_stop_error;
+		uint64_t error_code = picoquic_get_remote_stop_error(pconn, stream_id);
 		/* Update the local state of the stream */
 		imquic_mutex_lock(&conn->mutex);
 		imquic_stream *stream = g_hash_table_lookup(conn->streams, &stream_id);
@@ -382,12 +414,12 @@ static int imquic_quic_stream_callback(picoquic_cnx_t *pconn,
 			const char *reason = NULL;
 			if(g_atomic_int_get(&conn->closing)) {
 				error_code = local_application_reason ? local_application_reason : local_reason;
-				reason = pconn->local_error_reason;
+				reason = picoquic_get_local_error_reason(pconn);
 				IMQUIC_LOG(IMQUIC_LOG_INFO, "[%s] Connection closed: %"SCNu64" (%s)\n",
 					name, error_code, reason ? reason : "no reason");
 			} else if(g_atomic_int_compare_and_exchange(&conn->closed, 0, 1)) {
 				error_code = remote_application_reason ? remote_application_reason : remote_reason;
-				reason = pconn->remote_error_reason;
+				reason = picoquic_get_remote_error_reason(pconn);
 				IMQUIC_LOG(IMQUIC_LOG_INFO, "[%s] Connection closed by peer: %"SCNu64" (%s)\n",
 					name, error_code, reason ? reason : "no reason");
 			}

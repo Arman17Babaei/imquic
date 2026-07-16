@@ -67,6 +67,10 @@ typedef struct imquic_network_endpoint {
 	imquic_network_address remote_address;
 	/* Picoquic context */
 	picoquic_quic_t *qc;
+	/*! Congestion controller selected for this endpoint */
+	imquic_congestion_controller congestion_controller;
+	/*! Owned controller option string */
+	char *congestion_options;
 	/* Picoquic timer */
 	struct imquic_source *timer;
 	/*! \brief SNI the client will use */
