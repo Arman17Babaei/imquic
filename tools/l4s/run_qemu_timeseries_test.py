@@ -4,6 +4,7 @@
 import argparse
 import base64
 import os
+import re
 import shlex
 import socket
 import subprocess
@@ -119,6 +120,10 @@ def main():
     )
     parser.add_argument("--memory", type=int, default=4096)
     parser.add_argument("--cpus", type=int, default=4)
+    parser.add_argument("--make-target", default="l4s-timeseries-guest-check")
+    parser.add_argument("--guest-result-name", default="qemu-run")
+    parser.add_argument("--destination-prefix", default="qemu-timeseries")
+    parser.add_argument("--make-variable", action="append", default=[])
     args = parser.parse_args()
 
     if not args.base.is_file():
@@ -135,11 +140,14 @@ def main():
     ).stdout
     if status:
         raise SystemExit("refusing to test a dirty worktree; commit the milestone first")
+    for assignment in args.make_variable:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=[^\n]*", assignment):
+            raise SystemExit(f"invalid make variable: {assignment}")
 
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    destination = ROOT / "results" / "l4s" / f"qemu-timeseries-{timestamp}"
+    destination = ROOT / "results" / "l4s" / f"{args.destination_prefix}-{timestamp}"
     guest_root = f"/home/{args.user}/imquic-qemu-test"
-    guest_result = f"{guest_root}/results/l4s/qemu-run"
+    guest_result = f"{guest_root}/results/l4s/{args.guest_result_name}"
     port = free_port()
 
     with tempfile.TemporaryDirectory(prefix="imquic-l4s-qemu-") as temporary:
@@ -173,6 +181,7 @@ def main():
             wait_for_ssh(port, qemu)
             copy_to_guest(port, args.user, args.password, source_archive)
             copy_to_guest(port, args.user, args.password, picoquic_archive)
+            make_variables = " ".join(shlex.quote(value) for value in args.make_variable)
             provision = f'''set -e
 printf '%s\\n' {shlex.quote(args.password)} | sudo -S apt-get update >/dev/null
 printf '%s\\n' {shlex.quote(args.password)} | sudo -S DEBIAN_FRONTEND=noninteractive apt-get install -y libglib2.0-dev libssl-dev libjansson-dev libcurl4-openssl-dev automake libtool pkg-config >/dev/null
@@ -188,12 +197,12 @@ autoreconf -fi >/dev/null
 ./configure --with-picoquic={shlex.quote(guest_root)}/.deps/picoquic-l4s >/dev/null
 make -j{args.cpus} >/dev/null
 make check
-printf '%s\\n' {shlex.quote(args.password)} | sudo -S make l4s-timeseries-guest-check L4S_RESULT_DIR={shlex.quote(guest_result)}
+printf '%s\\n' {shlex.quote(args.password)} | sudo -S make {shlex.quote(args.make_target)} L4S_RESULT_DIR={shlex.quote(guest_result)} {make_variables}
 printf '%s\\n' {shlex.quote(args.password)} | sudo -S chown -R {shlex.quote(args.user)}:{shlex.quote(args.user)} {shlex.quote(guest_result)}
 '''
             ssh_command(port, args.user, args.password, provision)
             copy_results(port, args.user, args.password, guest_result, destination)
-            print(f"QEMU Prague time-series test: PASS ({destination})")
+            print(f"QEMU {args.make_target}: PASS ({destination})")
         finally:
             if qemu.poll() is None:
                 try:
