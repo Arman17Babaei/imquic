@@ -175,6 +175,7 @@ def main():
         overlay = temporary / "overlay.qcow2"
         source_archive = temporary / "imquic.tar.gz"
         picoquic_archive = temporary / "picoquic.tar.gz"
+        picotls_archive = temporary / "picotls.tar.gz"
         serial_log = temporary / "serial.log"
         run(
             [
@@ -186,6 +187,10 @@ def main():
         run(
             ["git", "archive", "--format=tar.gz", f"--output={picoquic_archive}", "HEAD"],
             cwd=ROOT / ".deps" / "picoquic-l4s",
+        )
+        run(
+            ["git", "archive", "--format=tar.gz", f"--output={picotls_archive}", "HEAD"],
+            cwd=ROOT / ".deps" / "picoquic-l4s" / "_deps" / "picotls-src",
         )
         qemu = subprocess.Popen(
             [
@@ -202,16 +207,20 @@ def main():
             wait_for_authenticated_ssh(port, args.user, args.password, qemu)
             copy_to_guest(port, args.user, args.password, source_archive)
             copy_to_guest(port, args.user, args.password, picoquic_archive)
+            copy_to_guest(port, args.user, args.password, picotls_archive)
             make_variables = " ".join(shlex.quote(value) for value in args.make_variable)
             provision = f'''set -e
-printf '%s\\n' {shlex.quote(args.password)} | sudo -S apt-get update >/dev/null
-printf '%s\\n' {shlex.quote(args.password)} | sudo -S DEBIAN_FRONTEND=noninteractive apt-get install -y libglib2.0-dev libssl-dev libjansson-dev libcurl4-openssl-dev automake libtool pkg-config >/dev/null
+if ! pkg-config --exists glib-2.0 openssl jansson libcurl; then
+  printf '%s\\n' {shlex.quote(args.password)} | sudo -S apt-get update >/dev/null
+  printf '%s\\n' {shlex.quote(args.password)} | sudo -S DEBIAN_FRONTEND=noninteractive apt-get install -y libglib2.0-dev libssl-dev libjansson-dev libcurl4-openssl-dev automake libtool pkg-config >/dev/null
+fi
 rm -rf {shlex.quote(guest_root)}
-mkdir -p {shlex.quote(guest_root)}/.deps/picoquic-l4s
+mkdir -p {shlex.quote(guest_root)}/.deps/picoquic-l4s {shlex.quote(guest_root)}/.deps/picotls-src
 tar -xzf /home/{shlex.quote(args.user)}/{source_archive.name} -C {shlex.quote(guest_root)}
 tar -xzf /home/{shlex.quote(args.user)}/{picoquic_archive.name} -C {shlex.quote(guest_root)}/.deps/picoquic-l4s
+tar -xzf /home/{shlex.quote(args.user)}/{picotls_archive.name} -C {shlex.quote(guest_root)}/.deps/picotls-src
 cd {shlex.quote(guest_root)}/.deps/picoquic-l4s
-cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=Y . >/dev/null
+cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=Y -DFETCHCONTENT_SOURCE_DIR_PICOTLS={shlex.quote(guest_root)}/.deps/picotls-src . >/dev/null
 cmake --build . --target picoquic-core picoquic-log picohttp-core -j{args.cpus} >/dev/null
 cd {shlex.quote(guest_root)}
 autoreconf -fi >/dev/null
