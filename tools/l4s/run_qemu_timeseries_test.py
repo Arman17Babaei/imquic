@@ -107,6 +107,26 @@ def wait_for_ssh(port, process, timeout=120):
     raise RuntimeError("QEMU SSH did not become ready")
 
 
+def wait_for_authenticated_ssh(port, user, password, process, timeout=60):
+    deadline = time.monotonic() + timeout
+    command = " ".join(
+        [
+            "ssh", "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null", "-p", str(port),
+            f"{shlex.quote(user)}@127.0.0.1", "true",
+        ]
+    )
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"QEMU exited early with status {process.returncode}")
+        try:
+            password_command(command, password, 10, stream=False)
+            return
+        except (RuntimeError, subprocess.CalledProcessError):
+            time.sleep(2)
+    raise RuntimeError("QEMU SSH authentication did not become ready")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -179,6 +199,7 @@ def main():
         )
         try:
             wait_for_ssh(port, qemu)
+            wait_for_authenticated_ssh(port, args.user, args.password, qemu)
             copy_to_guest(port, args.user, args.password, source_archive)
             copy_to_guest(port, args.user, args.password, picoquic_archive)
             make_variables = " ".join(shlex.quote(value) for value in args.make_variable)
