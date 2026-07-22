@@ -8,6 +8,7 @@
 #define TEST_TIMEOUT_STEPS 1000
 
 static uint8_t *test_payload;
+static uint64_t test_payload_size = TEST_PAYLOAD_SIZE;
 static uint64_t server_received;
 static uint64_t client_received;
 static volatile gint test_done;
@@ -15,6 +16,7 @@ static volatile gint test_failed;
 static volatile gint server_complete;
 static imquic_transport_metrics final_metrics;
 static gpointer active_client_connection;
+static gboolean expect_prague = TRUE;
 
 static void fail_test(const char *message)
 {
@@ -25,8 +27,8 @@ static void fail_test(const char *message)
 
 static gboolean payload_matches(uint64_t offset, uint8_t *bytes, uint64_t length)
 {
-	if(bytes == NULL || offset > TEST_PAYLOAD_SIZE ||
-		length > TEST_PAYLOAD_SIZE - offset)
+	if(bytes == NULL || offset > test_payload_size ||
+		length > test_payload_size - offset)
 		return FALSE;
 	return memcmp(test_payload + offset, bytes, length) == 0;
 }
@@ -43,7 +45,7 @@ static void server_stream_incoming(imquic_connection *conn, uint64_t stream_id,
 		fail_test("server failed to echo Prague traffic sample");
 		return;
 	}
-	if(complete && server_received != TEST_PAYLOAD_SIZE)
+	if(complete && server_received != test_payload_size)
 		fail_test("server received incomplete Prague traffic sample");
 	else if(complete)
 		g_atomic_int_set(&server_complete, 1);
@@ -59,14 +61,14 @@ static void client_stream_incoming(imquic_connection *conn, uint64_t stream_id,
 	}
 	client_received += length;
 	if(complete) {
-		if(client_received != TEST_PAYLOAD_SIZE) {
+		if(client_received != test_payload_size) {
 			fail_test("client received incomplete Prague traffic sample");
 			return;
 		}
 		if(imquic_get_transport_metrics(conn, &final_metrics) != 0 ||
 			final_metrics.congestion_window_bytes == 0 ||
 			final_metrics.pacing_rate_bytes_per_second == 0 ||
-			final_metrics.prague_alpha_denominator == 0) {
+			(expect_prague && final_metrics.prague_alpha_denominator == 0)) {
 			fail_test("Prague metrics were unavailable after IMQUIC traffic");
 			return;
 		}
@@ -82,7 +84,7 @@ static void client_new_connection(imquic_connection *conn, void *user_data)
 	g_atomic_pointer_set(&active_client_connection, conn);
 	if(imquic_new_stream_id(conn, TRUE, &stream_id) != 0 ||
 		imquic_send_on_stream(conn, stream_id, test_payload,
-			TEST_PAYLOAD_SIZE, TRUE) != 0) {
+			test_payload_size, TRUE) != 0) {
 		fail_test("client failed to generate Prague traffic sample");
 	}
 }
@@ -121,6 +123,8 @@ static int loopback_traffic_test(void)
 	uint16_t server_port;
 	int ret = 0;
 
+	test_payload_size = TEST_PAYLOAD_SIZE;
+	expect_prague = TRUE;
 	test_payload = g_malloc(TEST_PAYLOAD_SIZE);
 	for(uint64_t i = 0; i < TEST_PAYLOAD_SIZE; i++)
 		test_payload[i] = (uint8_t)(i % 251);
@@ -202,8 +206,8 @@ done:
 
 static void prepare_payload(void)
 {
-	test_payload = g_malloc(TEST_PAYLOAD_SIZE);
-	for(uint64_t i = 0; i < TEST_PAYLOAD_SIZE; i++)
+	test_payload = g_malloc(test_payload_size);
+	for(uint64_t i = 0; i < test_payload_size; i++)
 		test_payload[i] = (uint8_t)(i % 251);
 	server_received = 0;
 	client_received = 0;
@@ -213,7 +217,8 @@ static void prepare_payload(void)
 	memset(&final_metrics, 0, sizeof(final_metrics));
 }
 
-static int network_server(const char *bind_address, uint16_t port)
+static int network_server(const char *bind_address, uint16_t port,
+		imquic_congestion_controller controller)
 {
 	static const char *options =
 		"alpha_gain=1/16,ce_response=1/2,loss_beta=1/2,sudden_ce_threshold=1/2";
@@ -228,8 +233,9 @@ static int network_server(const char *bind_address, uint16_t port)
 		IMQUIC_CONFIG_TLS_CERT, "../.deps/picoquic-l4s/certs/cert.pem",
 		IMQUIC_CONFIG_TLS_KEY, "../.deps/picoquic-l4s/certs/key.pem",
 		IMQUIC_CONFIG_ALPN, "imquic-l4s-test",
-		IMQUIC_CONFIG_CONGESTION_CONTROL, IMQUIC_CONGESTION_PRAGUE,
-		IMQUIC_CONFIG_CONGESTION_OPTIONS, options,
+		IMQUIC_CONFIG_CONGESTION_CONTROL, controller,
+		IMQUIC_CONFIG_CONGESTION_OPTIONS,
+			controller == IMQUIC_CONGESTION_PRAGUE ? options : NULL,
 		IMQUIC_CONFIG_DONE, NULL);
 	if(server == NULL) {
 		ret = -1;
@@ -279,7 +285,7 @@ static void write_metrics_sample(FILE *csv, gint64 started_us)
 }
 
 static int network_client(const char *remote_host, uint16_t port,
-		const char *metrics_csv_path)
+		const char *metrics_csv_path, imquic_congestion_controller controller)
 {
 	static const char *options =
 		"alpha_gain=1/16,ce_response=1/2,loss_beta=1/2,sudden_ce_threshold=1/2";
@@ -309,8 +315,9 @@ static int network_client(const char *remote_host, uint16_t port,
 		IMQUIC_CONFIG_SNI, "localhost",
 		IMQUIC_CONFIG_TLS_NO_VERIFY, TRUE,
 		IMQUIC_CONFIG_ALPN, "imquic-l4s-test",
-		IMQUIC_CONFIG_CONGESTION_CONTROL, IMQUIC_CONGESTION_PRAGUE,
-		IMQUIC_CONFIG_CONGESTION_OPTIONS, options,
+		IMQUIC_CONFIG_CONGESTION_CONTROL, controller,
+		IMQUIC_CONFIG_CONGESTION_OPTIONS,
+			controller == IMQUIC_CONGESTION_PRAGUE ? options : NULL,
 		IMQUIC_CONFIG_DONE, NULL);
 	if(client == NULL) {
 		ret = -1;
@@ -330,11 +337,13 @@ static int network_client(const char *remote_host, uint16_t port,
 		fprintf(stderr, "network Prague traffic failed or timed out\n");
 		ret = -1;
 	} else {
-		printf("IMQUIC Prague network traffic: sent=%u, echoed=%" G_GUINT64_FORMAT
+		printf("IMQUIC %s network traffic: sent=%" G_GUINT64_FORMAT
+			", echoed=%" G_GUINT64_FORMAT
 			", rtt_us=%" G_GUINT64_FORMAT ", cwin=%" G_GUINT64_FORMAT
 			", pacing_Bps=%" G_GUINT64_FORMAT ", ect1=%" G_GUINT64_FORMAT
 			", ce=%" G_GUINT64_FORMAT ", alpha=%u/%u\n",
-			TEST_PAYLOAD_SIZE, client_received, final_metrics.smoothed_rtt_us,
+			controller == IMQUIC_CONGESTION_PRAGUE ? "Prague" : "Reno",
+			test_payload_size, client_received, final_metrics.smoothed_rtt_us,
 			final_metrics.congestion_window_bytes,
 			final_metrics.pacing_rate_bytes_per_second,
 			final_metrics.ect1_packets, final_metrics.ce_packets,
@@ -357,18 +366,58 @@ done:
 	return ret;
 }
 
+static int parse_network_options(int argc, char *argv[], gboolean client,
+		const char **metrics_csv, imquic_congestion_controller *controller)
+{
+	int cc_index = client ? 5 : 4;
+	int size_index = client ? 6 : 5;
+	if(metrics_csv != NULL)
+		*metrics_csv = argc > 4 && client ? argv[4] : NULL;
+	*controller = IMQUIC_CONGESTION_PRAGUE;
+	if(argc > cc_index) {
+		if(strcmp(argv[cc_index], "prague") == 0)
+			*controller = IMQUIC_CONGESTION_PRAGUE;
+		else if(strcmp(argv[cc_index], "reno") == 0)
+			*controller = IMQUIC_CONGESTION_RENO;
+		else
+			return -1;
+	}
+	if(argc > size_index) {
+		char *end = NULL;
+		uint64_t size = g_ascii_strtoull(argv[size_index], &end, 10);
+		if(end == argv[size_index] || *end != '\0' || size == 0)
+			return -1;
+		test_payload_size = size;
+	} else {
+		test_payload_size = TEST_PAYLOAD_SIZE;
+	}
+	expect_prague = *controller == IMQUIC_CONGESTION_PRAGUE;
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	int ret = imquic_init(NULL);
+	imquic_congestion_controller controller = IMQUIC_CONGESTION_PRAGUE;
+	const char *metrics_csv = NULL;
 	imquic_set_log_level(IMQUIC_LOG_WARN);
-	if(ret == 0 && argc == 4 && strcmp(argv[1], "--server") == 0)
-		ret = network_server(argv[2], (uint16_t)strtoul(argv[3], NULL, 10));
-	else if(ret == 0 && (argc == 4 || argc == 5) &&
-			strcmp(argv[1], "--client") == 0)
-		ret = network_client(argv[2], (uint16_t)strtoul(argv[3], NULL, 10),
-			argc == 5 ? argv[4] : NULL);
+	if(ret == 0 && argc >= 4 && argc <= 6 && strcmp(argv[1], "--server") == 0) {
+		if(parse_network_options(argc, argv, FALSE, NULL, &controller) != 0)
+			ret = -1;
+		else
+			ret = network_server(argv[2], (uint16_t)strtoul(argv[3], NULL, 10),
+				controller);
+	} else if(ret == 0 && argc >= 4 && argc <= 7 &&
+			strcmp(argv[1], "--client") == 0) {
+		if(parse_network_options(argc, argv, TRUE, &metrics_csv, &controller) != 0)
+			ret = -1;
+		else
+			ret = network_client(argv[2], (uint16_t)strtoul(argv[3], NULL, 10),
+				metrics_csv, controller);
+	}
 	else if(ret == 0 && argc != 1) {
-		fprintf(stderr, "usage: %s [--server BIND PORT | --client HOST PORT [CSV]]\n",
+		fprintf(stderr, "usage: %s [--server BIND PORT [CC [BYTES]] | "
+			"--client HOST PORT [CSV [CC [BYTES]]]]\n",
 			argv[0]);
 		ret = -1;
 	} else if(ret == 0)
