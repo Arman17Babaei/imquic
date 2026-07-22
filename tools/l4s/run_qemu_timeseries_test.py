@@ -9,6 +9,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from pathlib import Path
@@ -24,6 +25,21 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def run(command, **kwargs):
     return subprocess.run(command, check=True, text=True, **kwargs)
+
+
+def archive_tracked_with_submodules(repository, destination):
+    tracked = subprocess.run(
+        ["git", "ls-files", "--recurse-submodules", "-z"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    ).stdout.split(b"\0")
+    with tarfile.open(destination, "w:gz") as archive:
+        for encoded in tracked:
+            if not encoded:
+                continue
+            relative = os.fsdecode(encoded)
+            archive.add(repository / relative, arcname=relative, recursive=False)
 
 
 def free_port():
@@ -188,9 +204,9 @@ def main():
             ["git", "archive", "--format=tar.gz", f"--output={picoquic_archive}", "HEAD"],
             cwd=ROOT / ".deps" / "picoquic-l4s",
         )
-        run(
-            ["git", "archive", "--format=tar.gz", f"--output={picotls_archive}", "HEAD"],
-            cwd=ROOT / ".deps" / "picoquic-l4s" / "_deps" / "picotls-src",
+        archive_tracked_with_submodules(
+            ROOT / ".deps" / "picoquic-l4s" / "_deps" / "picotls-src",
+            picotls_archive,
         )
         qemu = subprocess.Popen(
             [
