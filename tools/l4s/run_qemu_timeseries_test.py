@@ -246,7 +246,15 @@ make check
 printf '%s\\n' {shlex.quote(args.password)} | sudo -S make {shlex.quote(args.make_target)} L4S_RESULT_DIR={shlex.quote(guest_result)} {make_variables}
 printf '%s\\n' {shlex.quote(args.password)} | sudo -S chown -R {shlex.quote(args.user)}:{shlex.quote(args.user)} {shlex.quote(guest_result)}
 '''
-            ssh_command(port, args.user, args.password, provision)
+            try:
+                ssh_command(port, args.user, args.password, provision)
+            except Exception:
+                try:
+                    copy_results(port, args.user, args.password, guest_result, destination)
+                    print(f"Retrieved failed guest results: {destination}", file=sys.stderr)
+                except Exception:
+                    pass
+                raise
             copy_results(port, args.user, args.password, guest_result, destination)
             print(f"QEMU {args.make_target}: PASS ({destination})")
         finally:

@@ -11,10 +11,10 @@ from pathlib import Path
 from analyze_timeseries import AnalysisError, load_samples
 
 
-def packet_count(path, ecn):
+def packet_count(path, display_filter):
     result = subprocess.run(
         [
-            "tshark", "-r", str(path), "-Y", f"ip.dsfield.ecn == {ecn}",
+            "tshark", "-r", str(path), "-Y", display_filter,
             "-T", "fields", "-e", "frame.number",
         ],
         check=True,
@@ -46,8 +46,15 @@ def analyze_case(directory):
     duration_us = samples[-1]["time_us"] - samples[0]["time_us"]
     if duration_us <= 0:
         raise AnalysisError(f"{directory.name}: invalid duration")
-    ect1_capture = packet_count(directory / "switch-client.pcap", 1)
-    ce_capture = packet_count(directory / "switch-server.pcap", 3)
+    ect1_capture = packet_count(
+        directory / "switch-client.pcap", "udp.port == 4443 && ip.dsfield.ecn == 1"
+    )
+    ce_capture = packet_count(
+        directory / "switch-server.pcap", "udp.port == 4443 && ip.dsfield.ecn == 3"
+    )
+    tcp_ecn_capture = packet_count(
+        directory / "switch-client.pcap", "tcp.port == 5201 && ip.dsfield.ecn != 0"
+    )
     l4s_packets, ecn_marks = tc_totals(directory / "dualpi2-stats.txt")
     final = samples[-1]
     row = {
@@ -62,6 +69,7 @@ def analyze_case(directory):
         "final_ce_packets": final["ce_packets"],
         "captured_ect1_packets": ect1_capture,
         "captured_ce_packets": ce_capture,
+        "background_tcp_ecn_packets": tcp_ecn_capture,
         "dualpi2_l4s_packets": l4s_packets,
         "dualpi2_ecn_marks": ecn_marks,
     }
@@ -74,6 +82,8 @@ def analyze_case(directory):
     else:
         raise AnalysisError(f"{directory.name}: unknown mode")
     target = metadata["background_mbps"]
+    if tcp_ecn_capture != 0:
+        raise AnalysisError(f"{directory.name}: background TCP was ECN-capable")
     if target > 0 and row["background_actual_mbps"] < target * 0.5:
         raise AnalysisError(f"{directory.name}: background TCP missed requested rate")
     return row

@@ -184,6 +184,8 @@ def main():
         net.start()
         client.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
         server.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
+        client.cmd("iptables -t mangle -A OUTPUT -p tcp --dport 5201 -j TOS --set-tos 0x00")
+        server.cmd("iptables -t mangle -A OUTPUT -p tcp --sport 5201 -j TOS --set-tos 0x00")
         if client.cmd(f"ping -c 1 -W 2 {server.IP()}").find("1 received") < 0:
             raise RuntimeError("Mininet client/server connectivity failed")
         for rate in rates:
