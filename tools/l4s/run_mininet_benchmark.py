@@ -38,11 +38,15 @@ def stop_process(process):
 
 def configure_dualpi2(switch, bottleneck):
     for interface in (f"{switch.name}-eth1", f"{switch.name}-eth2"):
-        command(["tc", "qdisc", "replace", "dev", interface, "root", "handle", "1:",
+        subprocess.run(
+            ["tc", "qdisc", "del", "dev", interface, "root"],
+            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        command(["tc", "qdisc", "add", "dev", interface, "root", "handle", "1:",
                  "htb", "default", "1"])
-        command(["tc", "class", "replace", "dev", interface, "parent", "1:",
+        command(["tc", "class", "add", "dev", interface, "parent", "1:",
                  "classid", "1:1", "htb", "rate", bottleneck, "burst", "32k"])
-        command(["tc", "qdisc", "replace", "dev", interface, "parent", "1:1",
+        command(["tc", "qdisc", "add", "dev", interface, "parent", "1:1",
                  "handle", "10:", "dualpi2", "target", "1ms", "tupdate", "1ms"])
 
 
