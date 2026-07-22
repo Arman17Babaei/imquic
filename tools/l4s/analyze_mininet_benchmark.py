@@ -107,13 +107,35 @@ def analyze(root):
 def write_results(root, rows):
     fields = list(rows[0])
     with (root / "summary.csv").open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=fields)
+        writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
+    comparisons = []
+    for rate in sorted({row["background_target_mbps"] for row in rows}):
+        pair = {
+            row["mode"]: row
+            for row in rows
+            if row["background_target_mbps"] == rate
+        }
+        enabled = pair["l4s-on"]
+        disabled = pair["l4s-off"]
+        comparisons.append({
+            "background_target_mbps": rate,
+            "l4s_on_goodput_mbps": enabled["quic_goodput_mbps"],
+            "l4s_off_goodput_mbps": disabled["quic_goodput_mbps"],
+            "goodput_delta_mbps": (
+                enabled["quic_goodput_mbps"] - disabled["quic_goodput_mbps"]
+            ),
+            "l4s_on_final_rtt_us": enabled["final_rtt_us"],
+            "l4s_off_final_rtt_us": disabled["final_rtt_us"],
+            "l4s_on_ce_feedback": enabled["final_ce_packets"],
+            "l4s_off_ce_feedback": disabled["final_ce_packets"],
+        })
     result = {
         "status": "pass",
         "cases": len(rows),
         "background_rates_mbps": sorted({row["background_target_mbps"] for row in rows}),
+        "comparisons": comparisons,
         "rows": rows,
     }
     (root / "analysis.json").write_text(

@@ -173,6 +173,40 @@ picoquic test asserts exact controller arithmetic; the time-series test asserts
 the live ordering and direction of ECT(1), CE feedback, alpha evolution, and
 congestion-window response without making timing-fragile exact-value claims.
 
+## Mininet L4S coexistence benchmark
+
+The paired coexistence benchmark runs in the same ephemeral QEMU environment:
+
+```sh
+make l4s-mininet-benchmark-check
+```
+
+It creates a `client -- s1 -- server` Mininet topology. The Open vSwitch in the
+middle applies HTB at 20 Mbit/s and the kernel's real DualPI2 qdisc in both
+directions. For each requested classic TCP background rate (0, 5, 10, and 15
+Mbit/s by default), the benchmark runs the same 4 MiB IMQUIC transfer once with
+Reno/Not-ECT and once with Prague/ECT(1). The iperf3 TCP flow has ECN disabled,
+and each case starts with fresh qdiscs and counters.
+
+The default eight-case QEMU run passed. Across its four Prague cases, packet
+captures contained 7,748--8,982 ECT(1) packets and 1,522--1,980 CE packets;
+QUIC reported 1,522--1,980 CE feedback events. All Reno cases contained zero
+ECT(1), all background TCP captures contained zero ECN-marked packets, and all
+Prague cases recorded DualPI2 L4S traffic and CE marks. The observed background
+rates were 4.98, 10.00, and 13.96 Mbit/s at the nonzero targets (minor paired-run
+variation omitted here).
+
+The compact result is tracked as
+`l4s/qemu-evidence/mininet-benchmark-analysis.json` and
+`l4s/qemu-evidence/mininet-benchmark-summary.csv`. Full per-case metrics,
+iperf3 JSON, qdisc counters, endpoint logs, and pcaps remain under the ignored
+`results/l4s/qemu-mininet-benchmark-<timestamp>/` directory. See
+`l4s/mininet-benchmark.md` for the exact observed table and tunable command.
+
+This adds **live L4S/classic coexistence evidence**. It verifies traffic
+classification and marking behavior under several offered classic loads; it
+does not claim statistically significant throughput superiority from one run.
+
 ## Remaining work
 
 None for the requested single-profile live trajectory. Profile comparisons can

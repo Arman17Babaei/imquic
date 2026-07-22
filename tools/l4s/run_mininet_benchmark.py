@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import platform
 import signal
 import shutil
 import subprocess
@@ -173,6 +174,21 @@ def main():
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     command(["mn", "-c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     args.output.mkdir(parents=True, exist_ok=False)
+    benchmark = {
+        "topology": "client--s1(OVSBridge+HTB+DualPI2)--server",
+        "kernel": platform.release(),
+        "mininet": subprocess.run(
+            ["mn", "--version"], check=True, text=True, capture_output=True
+        ).stdout.strip(),
+        "background_rates_mbps": rates,
+        "background_transport": "TCP iperf3 with ECN disabled",
+        "bottleneck": args.bottleneck,
+        "transfer_bytes": args.transfer_bytes,
+        "modes": {"l4s-on": "Prague ECT(1)", "l4s-off": "Reno Not-ECT"},
+    }
+    (args.output / "benchmark.json").write_text(
+        json.dumps(benchmark, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
     net = Mininet(controller=None, link=TCLink, switch=OVSBridge, autoSetMacs=True)
     client = net.addHost("client", ip="10.0.0.1/24")
