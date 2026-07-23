@@ -114,6 +114,38 @@ static int invalid_options_test(void)
 	return 0;
 }
 
+static int ecn_configuration_test(void)
+{
+	imquic_server *server = imquic_create_server("ect0-smoke",
+		IMQUIC_CONFIG_INIT,
+		IMQUIC_CONFIG_LOCAL_PORT, 0,
+		IMQUIC_CONFIG_TLS_CERT, "../.deps/picoquic-l4s/certs/cert.pem",
+		IMQUIC_CONFIG_TLS_KEY, "../.deps/picoquic-l4s/certs/key.pem",
+		IMQUIC_CONFIG_ALPN, "imquic-l4s-test",
+		IMQUIC_CONFIG_CONGESTION_CONTROL, IMQUIC_CONGESTION_RENO,
+		IMQUIC_CONFIG_ECN, IMQUIC_ECN_ECT0,
+		IMQUIC_CONFIG_DONE, NULL);
+	if(server == NULL) {
+		fprintf(stderr, "ECT(0) endpoint configuration was rejected\n");
+		return -1;
+	}
+	imquic_shutdown_endpoint(server);
+	server = imquic_create_server("invalid-ecn",
+		IMQUIC_CONFIG_INIT,
+		IMQUIC_CONFIG_LOCAL_PORT, 0,
+		IMQUIC_CONFIG_TLS_CERT, "../.deps/picoquic-l4s/certs/cert.pem",
+		IMQUIC_CONFIG_TLS_KEY, "../.deps/picoquic-l4s/certs/key.pem",
+		IMQUIC_CONFIG_ALPN, "imquic-l4s-test",
+		IMQUIC_CONFIG_ECN, 99,
+		IMQUIC_CONFIG_DONE, NULL);
+	if(server != NULL) {
+		fprintf(stderr, "invalid ECN mode was accepted\n");
+		imquic_shutdown_endpoint(server);
+		return -1;
+	}
+	return 0;
+}
+
 static int loopback_traffic_test(void)
 {
 	static const char *prague_options =
@@ -218,7 +250,7 @@ static void prepare_payload(void)
 }
 
 static int network_server(const char *bind_address, uint16_t port,
-		imquic_congestion_controller controller)
+		imquic_congestion_controller controller, imquic_ecn_mode ecn_mode)
 {
 	static const char *options =
 		"alpha_gain=1/16,ce_response=1/2,loss_beta=1/2,sudden_ce_threshold=1/2";
@@ -236,6 +268,7 @@ static int network_server(const char *bind_address, uint16_t port,
 		IMQUIC_CONFIG_CONGESTION_CONTROL, controller,
 		IMQUIC_CONFIG_CONGESTION_OPTIONS,
 			controller == IMQUIC_CONGESTION_PRAGUE ? options : NULL,
+		IMQUIC_CONFIG_ECN, ecn_mode,
 		IMQUIC_CONFIG_DONE, NULL);
 	if(server == NULL) {
 		ret = -1;
@@ -285,7 +318,8 @@ static void write_metrics_sample(FILE *csv, gint64 started_us)
 }
 
 static int network_client(const char *remote_host, uint16_t port,
-		const char *metrics_csv_path, imquic_congestion_controller controller)
+		const char *metrics_csv_path, imquic_congestion_controller controller,
+		imquic_ecn_mode ecn_mode)
 {
 	static const char *options =
 		"alpha_gain=1/16,ce_response=1/2,loss_beta=1/2,sudden_ce_threshold=1/2";
@@ -318,6 +352,7 @@ static int network_client(const char *remote_host, uint16_t port,
 		IMQUIC_CONFIG_CONGESTION_CONTROL, controller,
 		IMQUIC_CONFIG_CONGESTION_OPTIONS,
 			controller == IMQUIC_CONGESTION_PRAGUE ? options : NULL,
+		IMQUIC_CONFIG_ECN, ecn_mode,
 		IMQUIC_CONFIG_DONE, NULL);
 	if(client == NULL) {
 		ret = -1;
@@ -342,7 +377,8 @@ static int network_client(const char *remote_host, uint16_t port,
 			", rtt_us=%" G_GUINT64_FORMAT ", cwin=%" G_GUINT64_FORMAT
 			", pacing_Bps=%" G_GUINT64_FORMAT ", ect1=%" G_GUINT64_FORMAT
 			", ce=%" G_GUINT64_FORMAT ", alpha=%u/%u\n",
-			controller == IMQUIC_CONGESTION_PRAGUE ? "Prague" : "Reno",
+			controller == IMQUIC_CONGESTION_PRAGUE ? "Prague" :
+				(ecn_mode == IMQUIC_ECN_ECT0 ? "Reno-ECT0" : "Reno"),
 			test_payload_size, client_received, final_metrics.smoothed_rtt_us,
 			final_metrics.congestion_window_bytes,
 			final_metrics.pacing_rate_bytes_per_second,
@@ -367,18 +403,24 @@ done:
 }
 
 static int parse_network_options(int argc, char *argv[], gboolean client,
-		const char **metrics_csv, imquic_congestion_controller *controller)
+		const char **metrics_csv, imquic_congestion_controller *controller,
+		imquic_ecn_mode *ecn_mode)
 {
 	int cc_index = client ? 5 : 4;
 	int size_index = client ? 6 : 5;
 	if(metrics_csv != NULL)
 		*metrics_csv = argc > 4 && client ? argv[4] : NULL;
 	*controller = IMQUIC_CONGESTION_PRAGUE;
+	*ecn_mode = IMQUIC_ECN_DEFAULT;
 	if(argc > cc_index) {
 		if(strcmp(argv[cc_index], "prague") == 0)
 			*controller = IMQUIC_CONGESTION_PRAGUE;
 		else if(strcmp(argv[cc_index], "reno") == 0)
 			*controller = IMQUIC_CONGESTION_RENO;
+		else if(strcmp(argv[cc_index], "reno-ect0") == 0) {
+			*controller = IMQUIC_CONGESTION_RENO;
+			*ecn_mode = IMQUIC_ECN_ECT0;
+		}
 		else
 			return -1;
 	}
@@ -399,21 +441,24 @@ int main(int argc, char *argv[])
 {
 	int ret = imquic_init(NULL);
 	imquic_congestion_controller controller = IMQUIC_CONGESTION_PRAGUE;
+	imquic_ecn_mode ecn_mode = IMQUIC_ECN_DEFAULT;
 	const char *metrics_csv = NULL;
 	imquic_set_log_level(IMQUIC_LOG_WARN);
 	if(ret == 0 && argc >= 4 && argc <= 6 && strcmp(argv[1], "--server") == 0) {
-		if(parse_network_options(argc, argv, FALSE, NULL, &controller) != 0)
+		if(parse_network_options(argc, argv, FALSE, NULL, &controller,
+				&ecn_mode) != 0)
 			ret = -1;
 		else
 			ret = network_server(argv[2], (uint16_t)strtoul(argv[3], NULL, 10),
-				controller);
+				controller, ecn_mode);
 	} else if(ret == 0 && argc >= 4 && argc <= 7 &&
 			strcmp(argv[1], "--client") == 0) {
-		if(parse_network_options(argc, argv, TRUE, &metrics_csv, &controller) != 0)
+		if(parse_network_options(argc, argv, TRUE, &metrics_csv, &controller,
+				&ecn_mode) != 0)
 			ret = -1;
 		else
 			ret = network_client(argv[2], (uint16_t)strtoul(argv[3], NULL, 10),
-				metrics_csv, controller);
+				metrics_csv, controller, ecn_mode);
 	}
 	else if(ret == 0 && argc != 1) {
 		fprintf(stderr, "usage: %s [--server BIND PORT [CC [BYTES]] | "
@@ -422,6 +467,8 @@ int main(int argc, char *argv[])
 		ret = -1;
 	} else if(ret == 0)
 		ret = invalid_options_test();
+	if(ret == 0 && argc == 1)
+		ret = ecn_configuration_test();
 	if(ret == 0 && argc == 1)
 		ret = loopback_traffic_test();
 	imquic_deinit();

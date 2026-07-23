@@ -8,6 +8,7 @@ EXTRA_DIST = \
 	l4s/mininet-benchmark.md \
 	l4s/qemu-evidence/mininet-benchmark-aggregate.csv \
 	l4s/qemu-evidence/mininet-benchmark-analysis.json \
+	l4s/qemu-evidence/mininet-benchmark-baseline-summary.csv \
 	l4s/qemu-evidence/mininet-benchmark-comparison.svg \
 	l4s/qemu-evidence/mininet-benchmark-environment.json \
 	l4s/qemu-evidence/mininet-benchmark-summary.csv \
@@ -62,3 +63,28 @@ l4s-mininet-benchmark-guest-check:
 		--bottleneck $(L4S_BENCHMARK_BOTTLENECK) \
 		--background-seconds $(L4S_BENCHMARK_SECONDS) \
 		--repetitions $(L4S_BENCHMARK_REPETITIONS)
+
+.PHONY: l4s-mininet-ect0-check
+l4s-mininet-ect0-check:
+	python3 $(top_srcdir)/tools/l4s/run_qemu_timeseries_test.py \
+		--make-target l4s-mininet-ect0-guest-check \
+		--guest-result-name mininet-ect0 \
+		--destination-prefix qemu-mininet-ect0 \
+		--make-variable L4S_BENCHMARK_RATES=$(L4S_BENCHMARK_RATES) \
+		--make-variable L4S_BENCHMARK_BYTES=$(L4S_BENCHMARK_BYTES) \
+		--make-variable L4S_BENCHMARK_BOTTLENECK=$(L4S_BENCHMARK_BOTTLENECK) \
+		--make-variable L4S_BENCHMARK_SECONDS=$(L4S_BENCHMARK_SECONDS) \
+		--make-variable L4S_BENCHMARK_REPETITIONS=$(L4S_BENCHMARK_REPETITIONS)
+
+.PHONY: l4s-mininet-ect0-guest-check
+l4s-mininet-ect0-guest-check:
+	python3 $(top_srcdir)/tools/l4s/run_mininet_benchmark.py \
+		--output $(L4S_RESULT_DIR) \
+		--background-mbps $(L4S_BENCHMARK_RATES) \
+		--transfer-bytes $(L4S_BENCHMARK_BYTES) \
+		--bottleneck $(L4S_BENCHMARK_BOTTLENECK) \
+		--background-seconds $(L4S_BENCHMARK_SECONDS) \
+		--repetitions $(L4S_BENCHMARK_REPETITIONS) \
+		--modes l4s-ect0 \
+		--reference-summary \
+			$(top_srcdir)/l4s/qemu-evidence/mininet-benchmark-baseline-summary.csv

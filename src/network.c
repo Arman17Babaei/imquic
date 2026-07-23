@@ -381,8 +381,22 @@ imquic_network_endpoint *imquic_network_endpoint_create(imquic_configuration *co
 			config->name, errno, g_strerror(errno));
 		return NULL;
 	}
-	if(config->congestion_controller == IMQUIC_CONGESTION_PRAGUE) {
-		int ecn = 1;
+	int ecn = 0;
+	if(config->ecn_mode == IMQUIC_ECN_DEFAULT) {
+		ecn = config->congestion_controller == IMQUIC_CONGESTION_PRAGUE ? 1 : 0;
+	} else if(config->ecn_mode == IMQUIC_ECN_NOT_ECT) {
+		ecn = 0;
+	} else if(config->ecn_mode == IMQUIC_ECN_ECT0) {
+		ecn = 2;
+	} else if(config->ecn_mode == IMQUIC_ECN_ECT1) {
+		ecn = 1;
+	} else {
+		IMQUIC_LOG(IMQUIC_LOG_ERR, "[%s] Invalid ECN mode: %d\n",
+			config->name, config->ecn_mode);
+		close(quic_fd);
+		return NULL;
+	}
+	if(ecn != 0) {
 		int receive_ecn = 1;
 		int level = family == AF_INET ? IPPROTO_IP : IPPROTO_IPV6;
 		int send_option = family == AF_INET ? IP_TOS : IPV6_TCLASS;
@@ -390,7 +404,7 @@ imquic_network_endpoint *imquic_network_endpoint_create(imquic_configuration *co
 		if(setsockopt(quic_fd, level, send_option, &ecn, sizeof(ecn)) != 0 ||
 				setsockopt(quic_fd, level, receive_option, &receive_ecn,
 					sizeof(receive_ecn)) != 0) {
-			IMQUIC_LOG(IMQUIC_LOG_ERR, "[%s] Failed to enable Prague ECN: %d (%s)\n",
+			IMQUIC_LOG(IMQUIC_LOG_ERR, "[%s] Failed to enable ECN: %d (%s)\n",
 				config->name, errno, g_strerror(errno));
 			close(quic_fd);
 			return NULL;

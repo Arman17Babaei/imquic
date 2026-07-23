@@ -191,6 +191,15 @@ typedef enum imquic_congestion_controller {
 	IMQUIC_CONGESTION_PRAGUE,
 } imquic_congestion_controller;
 
+/*! Explicit ECN marking mode for an endpoint */
+typedef enum imquic_ecn_mode {
+	/*! Use the controller default (ECT(1) for Prague, Not-ECT otherwise) */
+	IMQUIC_ECN_DEFAULT = 0,
+	IMQUIC_ECN_NOT_ECT,
+	IMQUIC_ECN_ECT0,
+	IMQUIC_ECN_ECT1,
+} imquic_ecn_mode;
+
 /*! Stable snapshot of transport and Prague state */
 typedef struct imquic_transport_metrics {
 	uint64_t smoothed_rtt_us;
@@ -198,6 +207,7 @@ typedef struct imquic_transport_metrics {
 	uint64_t congestion_window_bytes;
 	uint64_t bytes_in_flight;
 	uint64_t pacing_rate_bytes_per_second;
+	uint64_t ect0_packets;
 	uint64_t ect1_packets;
 	uint64_t ce_packets;
 	uint32_t prague_alpha_numerator;
@@ -361,6 +371,8 @@ typedef enum imquic_config {
 	IMQUIC_CONFIG_CONGESTION_CONTROL,
 	/*! Controller-specific option string */
 	IMQUIC_CONFIG_CONGESTION_OPTIONS,
+	/*! ECN marking mode (imquic_ecn_mode) */
+	IMQUIC_CONFIG_ECN,
 	/*! \brief Generic user data, if any (void pointer) */
 	IMQUIC_CONFIG_USER_DATA,
 	/*! \brief Must be the last property, followed by NULL */

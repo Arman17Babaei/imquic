@@ -73,6 +73,8 @@ typedef struct imquic_configuration {
 	imquic_congestion_controller congestion_controller;
 	/*! Controller-specific option string */
 	const char *congestion_options;
+	/*! ECN marking mode */
+	imquic_ecn_mode ecn_mode;
 	/*! \brief File to use for session tickets, when doing early data */
 	const char *ticket_file;
 	/*! \brief MoQ version to negotiate, if any */

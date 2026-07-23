@@ -94,6 +94,8 @@ imquic_server *imquic_create_roq_server(const char *name, ...) {
 			config.congestion_controller = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_CONGESTION_OPTIONS) {
 			config.congestion_options = va_arg(args, char *);
+		} else if(property == IMQUIC_CONFIG_ECN) {
+			config.ecn_mode = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_USER_DATA) {
 			config.user_data = va_arg(args, void *);
 		} else {
@@ -201,6 +203,8 @@ imquic_client *imquic_create_roq_client(const char *name, ...) {
 			config.congestion_controller = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_CONGESTION_OPTIONS) {
 			config.congestion_options = va_arg(args, char *);
+		} else if(property == IMQUIC_CONFIG_ECN) {
+			config.ecn_mode = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_USER_DATA) {
 			config.user_data = va_arg(args, void *);
 		} else {

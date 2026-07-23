@@ -209,6 +209,8 @@ const char *imquic_config_str(imquic_config type) {
 			return "IMQUIC_CONFIG_CONGESTION_CONTROL";
 		case IMQUIC_CONFIG_CONGESTION_OPTIONS:
 			return "IMQUIC_CONFIG_CONGESTION_OPTIONS";
+		case IMQUIC_CONFIG_ECN:
+			return "IMQUIC_CONFIG_ECN";
 		case IMQUIC_CONFIG_USER_DATA:
 			return "IMQUIC_CONFIG_USER_DATA";
 		case IMQUIC_CONFIG_DONE:
@@ -300,6 +302,8 @@ imquic_server *imquic_create_server(const char *name, ...) {
 			config.congestion_controller = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_CONGESTION_OPTIONS) {
 			config.congestion_options = va_arg(args, char *);
+		} else if(property == IMQUIC_CONFIG_ECN) {
+			config.ecn_mode = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_USER_DATA) {
 			config.user_data = va_arg(args, void *);
 		} else {
@@ -390,6 +394,8 @@ imquic_client *imquic_create_client(const char *name, ...) {
 			config.congestion_controller = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_CONGESTION_OPTIONS) {
 			config.congestion_options = va_arg(args, char *);
+		} else if(property == IMQUIC_CONFIG_ECN) {
+			config.ecn_mode = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_USER_DATA) {
 			config.user_data = va_arg(args, void *);
 		} else {

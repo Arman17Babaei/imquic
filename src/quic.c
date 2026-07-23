@@ -188,6 +188,7 @@ int imquic_get_transport_metrics(imquic_connection *conn,
 	if(conn == NULL || conn->piconn == NULL || metrics == NULL)
 		return -1;
 	picoquic_path_quality_t quality = { 0 };
+	picoquic_ecn_metrics_t ecn = { 0 };
 	picoquic_prague_metrics_t prague = { 0 };
 	picoquic_get_default_path_quality(conn->piconn, &quality);
 	memset(metrics, 0, sizeof(*metrics));
@@ -196,9 +197,12 @@ int imquic_get_transport_metrics(imquic_connection *conn,
 	metrics->congestion_window_bytes = quality.cwin;
 	metrics->bytes_in_flight = quality.bytes_in_transit;
 	metrics->pacing_rate_bytes_per_second = quality.pacing_rate;
+	if(picoquic_get_ecn_metrics(conn->piconn, &ecn) == 0) {
+		metrics->ect0_packets = ecn.ect0_packets;
+		metrics->ect1_packets = ecn.ect1_packets;
+		metrics->ce_packets = ecn.ce_packets;
+	}
 	if(picoquic_prague_get_metrics(conn->piconn, &prague) == 0) {
-		metrics->ect1_packets = prague.ect1_packets;
-		metrics->ce_packets = prague.ce_packets;
 		metrics->prague_alpha_numerator = prague.alpha_numerator;
 		metrics->prague_alpha_denominator = prague.alpha_denominator;
 	}

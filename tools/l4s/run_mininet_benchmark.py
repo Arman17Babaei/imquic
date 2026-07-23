@@ -21,6 +21,16 @@ from mininet.node import OVSBridge
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = ROOT / "src" / "imquic-l4s-test"
 ANALYZER = ROOT / "tools" / "l4s" / "analyze_mininet_benchmark.py"
+MODE_CONTROLLERS = {
+    "l4s-off": "reno",
+    "l4s-ect0": "reno-ect0",
+    "l4s-on": "prague",
+}
+MODE_LABELS = {
+    "l4s-off": "Reno Not-ECT",
+    "l4s-ect0": "Reno ECT(0)",
+    "l4s-on": "Prague ECT(1)",
+}
 
 
 def command(args, **kwargs):
@@ -61,7 +71,7 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
     configure_dualpi2(switch, bottleneck)
     metadata = {
         "mode": mode,
-        "controller": "prague" if mode == "l4s-on" else "reno",
+        "controller": MODE_CONTROLLERS[mode],
         "background_mbps": background_mbps,
         "background_transport": "TCP",
         "background_ecn": "disabled",
@@ -167,12 +177,24 @@ def main():
     parser.add_argument("--transfer-bytes", type=int, default=4 * 1024 * 1024)
     parser.add_argument("--background-seconds", type=int, default=8)
     parser.add_argument("--repetitions", type=int, default=5)
+    parser.add_argument(
+        "--modes", default="l4s-off,l4s-ect0,l4s-on",
+        help="comma-separated benchmark modes",
+    )
+    parser.add_argument("--reference-summary", type=Path)
     args = parser.parse_args()
     rates = [int(value) for value in args.background_mbps.split(",")]
+    modes = args.modes.split(",")
     if not rates or any(rate < 0 for rate in rates):
         parser.error("background rates must be non-negative integers")
     if args.repetitions <= 0:
         parser.error("repetitions must be positive")
+    if not modes or len(set(modes)) != len(modes) or any(
+        mode not in MODE_CONTROLLERS for mode in modes
+    ):
+        parser.error(f"modes must be unique members of {','.join(MODE_CONTROLLERS)}")
+    if args.reference_summary is not None and not args.reference_summary.is_file():
+        parser.error(f"reference summary not found: {args.reference_summary}")
     units = {"kbit": 0.001, "mbit": 1.0, "gbit": 1000.0}
     match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(kbit|mbit|gbit)", args.bottleneck)
     if match is None:
@@ -204,7 +226,7 @@ def main():
         "bottleneck": args.bottleneck,
         "bottleneck_mbps": bottleneck_mbps,
         "transfer_bytes": args.transfer_bytes,
-        "modes": {"l4s-on": "Prague ECT(1)", "l4s-off": "Reno Not-ECT"},
+        "modes": {mode: MODE_LABELS[mode] for mode in modes},
     }
     (args.output / "benchmark.json").write_text(
         json.dumps(benchmark, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -226,7 +248,7 @@ def main():
             raise RuntimeError("Mininet client/server connectivity failed")
         for rate in rates:
             for repetition in range(1, args.repetitions + 1):
-                for mode in ("l4s-off", "l4s-on"):
+                for mode in modes:
                     print(
                         f"running {mode} with {rate} Mbps classic TCP background "
                         f"(repetition {repetition}/{args.repetitions})",
@@ -240,7 +262,12 @@ def main():
     finally:
         net.stop()
         command(["mn", "-c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    command([sys.executable, str(ANALYZER), str(args.output)])
+    analyzer_command = [sys.executable, str(ANALYZER), str(args.output)]
+    if args.reference_summary is not None:
+        analyzer_command.extend(
+            ["--reference-summary", str(args.reference_summary)]
+        )
+    command(analyzer_command)
     print(f"Mininet L4S benchmark: PASS ({args.output})")
 
 
