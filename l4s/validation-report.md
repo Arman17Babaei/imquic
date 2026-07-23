@@ -10,6 +10,7 @@ Date: 2026-07-23
 - IMQUIC dynamics pin commit: `648ab2809b14a3fd293c6446263c32e44e9a9d63`
 - IMQUIC loopback traffic commit: `dc626ee28b820dde185ad7b7786ae14747960c00`
 - IMQUIC repeated Mininet benchmark commit: `0f13beb1bbfa685808d758df6990a1fd45455b06`
+- IMQUIC classic-ECN benchmark commit: `b5bec70d7640f1da80467b36191bbbdcf0e7daba`
 - IMQUIC branch: `codex/imquic-l4s-prague`
 - IMQUIC fork: `https://github.com/Arman17Babaei/imquic.git`
 - picoquic upstream: `https://github.com/private-octopus/picoquic`
@@ -18,6 +19,7 @@ Date: 2026-07-23
 - picoquic parameter commit: `bbe86f4e6b9d08524a920cac852889dc5ac06496`
 - picoquic metrics commit: `04ee27f57212064ec0f2ada2ec3dbf2f7d1fe255`
 - picoquic dynamics test commit: `581b2841c2d651a045985999a1e319c64996ff58`
+- picoquic generic ECN metrics commit: `6014183ca0c73c2d71995ebad2e377054ca6b2d5`
 - picoquic local branch: `codex/prague-params`
 - picoquic tracking: Git submodule at `.deps/picoquic-l4s`
 - picotls pin: `bfa67875982afc4c24f21e146cef4747fa189c2f`
@@ -186,21 +188,33 @@ It creates a `client -- s1 -- server` Mininet topology. The Open vSwitch in the
 middle applies HTB at 20 Mbit/s and the kernel's real DualPI2 qdisc in both
 directions. For each requested classic TCP background rate (0, 5, 10, and 20
 Mbit/s by default), the benchmark runs the same 4 MiB IMQUIC transfer five times
-with Reno/Not-ECT and five times with Prague/ECT(1). The iperf3 TCP flow has ECN
+with Reno/Not-ECT, Reno/ECT(0), and Prague/ECT(1). The iperf3 TCP flow has ECN
 disabled, and each case starts with fresh qdiscs and counters.
 
-The default 40-case QEMU run passed. Every Prague run contained ECT(1),
-capture-visible CE, DualPI2 CE marks, and QUIC CE feedback; captured Prague
-ECT(1) ranged from 7,828 to 8,881 packets and QUIC CE feedback from 1,402 to
-2,316 packets. All 20 Reno cases contained zero ECT(1)/CE feedback and every
-background TCP capture contained zero ECN-marked packets.
+The 40-case Not-ECT/ECT(1) baseline and incremental 20-case ECT(0) QEMU run
+passed. The earlier modes were not rerun. Every ECT(0) run contained
+capture-visible ECT(0) and CE plus QUIC ACK_ECN CE feedback; ECT(0) captures
+contained 8,094--9,197 ECT(0) packets and QUIC reported 124--541 CE packets.
+Every Prague run contained ECT(1), CE, and ACK_ECN feedback. All Not-ECT runs
+contained zero ECN feedback and every background TCP capture contained zero
+ECN-marked packets.
 
 During the exact QUIC intervals, combined client-to-server QUIC and TCP IP load
-averaged 90.6--92.6% of the 20 Mbit/s bottleneck for Reno and 93.0--95.9% for
-Prague at nonzero loads. The 20 Mbit/s background request achieved only 14.14
-Mbit/s alongside Reno QUIC and 14.34 Mbit/s alongside Prague QUIC. The resulting
-plot therefore shows the shared bottleneck directly instead of summing rates
-measured over different time intervals.
+averaged 90.6--92.6% of the 20 Mbit/s bottleneck for Not-ECT Reno,
+91.3--94.6% for ECT(0) Reno, and 93.0--95.9% for Prague at nonzero loads. The
+20 Mbit/s background request achieved only about 14.14 Mbit/s alongside either
+Reno mode and 14.34 Mbit/s alongside Prague. The resulting plot therefore
+shows the shared bottleneck directly instead of summing rates measured over
+different time intervals.
+
+ECT(0) Reno averaged 17.30, 15.55, 15.85, and 16.78 Mbit/s QUIC goodput at the
+0, 5, 10, and 20 Mbit/s background targets. Prague averaged 18.34, 13.59,
+13.72, and 14.39 Mbit/s. Prague's lower goodput is therefore limited to the
+loaded cases and is not an ECN-bit overhead: ECT(0) Reno also processed CE but
+received far fewer marks in the classic queue. Prague's scalable CE response
+kept a smaller final cwnd and a much lower final smoothed RTT. These are
+descriptive results from short transfers, not a formal significance claim; the
+ECT(0) mode was collected later rather than interleaved with the baseline.
 
 The compact result is tracked as
 `l4s/qemu-evidence/mininet-benchmark-analysis.json`, the raw and aggregate CSVs,
