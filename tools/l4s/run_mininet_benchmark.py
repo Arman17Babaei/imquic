@@ -195,7 +195,8 @@ def main():
         "topology": "client--s1(OVSBridge+HTB+DualPI2)--server",
         "kernel": platform.release(),
         "mininet": subprocess.run(
-            ["mn", "--version"], check=True, text=True, capture_output=True
+            ["mn", "--version"], check=True, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         ).stdout.strip(),
         "background_rates_mbps": rates,
         "repetitions": args.repetitions,

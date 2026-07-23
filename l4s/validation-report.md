@@ -1,6 +1,6 @@
 # IMQUIC L4S environment validation
 
-Date: 2026-07-16
+Date: 2026-07-23
 
 ## Revisions
 
@@ -9,6 +9,7 @@ Date: 2026-07-16
 - IMQUIC Prague feature commit: `21edc9cc0db447f45ff041427f9f0f8814d03357`
 - IMQUIC dynamics pin commit: `648ab2809b14a3fd293c6446263c32e44e9a9d63`
 - IMQUIC loopback traffic commit: `dc626ee28b820dde185ad7b7786ae14747960c00`
+- IMQUIC repeated Mininet benchmark commit: `0f13beb1bbfa685808d758df6990a1fd45455b06`
 - IMQUIC branch: `codex/imquic-l4s-prague`
 - IMQUIC fork: `https://github.com/Arman17Babaei/imquic.git`
 - picoquic upstream: `https://github.com/private-octopus/picoquic`
@@ -183,29 +184,35 @@ make l4s-mininet-benchmark-check
 
 It creates a `client -- s1 -- server` Mininet topology. The Open vSwitch in the
 middle applies HTB at 20 Mbit/s and the kernel's real DualPI2 qdisc in both
-directions. For each requested classic TCP background rate (0, 5, 10, and 15
-Mbit/s by default), the benchmark runs the same 4 MiB IMQUIC transfer once with
-Reno/Not-ECT and once with Prague/ECT(1). The iperf3 TCP flow has ECN disabled,
-and each case starts with fresh qdiscs and counters.
+directions. For each requested classic TCP background rate (0, 5, 10, and 20
+Mbit/s by default), the benchmark runs the same 4 MiB IMQUIC transfer five times
+with Reno/Not-ECT and five times with Prague/ECT(1). The iperf3 TCP flow has ECN
+disabled, and each case starts with fresh qdiscs and counters.
 
-The default eight-case QEMU run passed. Across its four Prague cases, packet
-captures contained 7,748--8,982 ECT(1) packets and 1,522--1,980 CE packets;
-QUIC reported 1,522--1,980 CE feedback events. All Reno cases contained zero
-ECT(1), all background TCP captures contained zero ECN-marked packets, and all
-Prague cases recorded DualPI2 L4S traffic and CE marks. The observed background
-rates were 4.98, 10.00, and 13.96 Mbit/s at the nonzero targets (minor paired-run
-variation omitted here).
+The default 40-case QEMU run passed. Every Prague run contained ECT(1),
+capture-visible CE, DualPI2 CE marks, and QUIC CE feedback; captured Prague
+ECT(1) ranged from 7,828 to 8,881 packets and QUIC CE feedback from 1,402 to
+2,316 packets. All 20 Reno cases contained zero ECT(1)/CE feedback and every
+background TCP capture contained zero ECN-marked packets.
+
+During the exact QUIC intervals, combined client-to-server QUIC and TCP IP load
+averaged 90.6--92.6% of the 20 Mbit/s bottleneck for Reno and 92.6--95.9% for
+Prague at nonzero loads. The 20 Mbit/s background request achieved only 14.14
+Mbit/s alongside Reno QUIC and 14.34 Mbit/s alongside Prague QUIC. The resulting
+plot therefore shows the shared bottleneck directly instead of summing rates
+measured over different time intervals.
 
 The compact result is tracked as
-`l4s/qemu-evidence/mininet-benchmark-analysis.json` and
-`l4s/qemu-evidence/mininet-benchmark-summary.csv`. Full per-case metrics,
+`l4s/qemu-evidence/mininet-benchmark-analysis.json`, the raw and aggregate CSVs,
+and `l4s/qemu-evidence/mininet-benchmark-comparison.svg`. Full per-case metrics,
 iperf3 JSON, qdisc counters, endpoint logs, and pcaps remain under the ignored
 `results/l4s/qemu-mininet-benchmark-<timestamp>/` directory. See
 `l4s/mininet-benchmark.md` for the exact observed table and tunable command.
 
 This adds **live L4S/classic coexistence evidence**. It verifies traffic
 classification and marking behavior under several offered classic loads; it
-does not claim statistically significant throughput superiority from one run.
+does not claim statistically significant throughput superiority from five
+repetitions.
 
 ## Remaining work
 

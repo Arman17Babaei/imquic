@@ -6,7 +6,9 @@ DISTCHECK_CONFIGURE_FLAGS = --disable-docs
 EXTRA_DIST = \
 	imquic.pc.in \
 	l4s/mininet-benchmark.md \
+	l4s/qemu-evidence/mininet-benchmark-aggregate.csv \
 	l4s/qemu-evidence/mininet-benchmark-analysis.json \
+	l4s/qemu-evidence/mininet-benchmark-comparison.svg \
 	l4s/qemu-evidence/mininet-benchmark-environment.json \
 	l4s/qemu-evidence/mininet-benchmark-summary.csv \
 	tools/l4s/analyze_mininet_benchmark.py \
