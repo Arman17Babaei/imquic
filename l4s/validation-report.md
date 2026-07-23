@@ -196,7 +196,7 @@ ECT(1) ranged from 7,828 to 8,881 packets and QUIC CE feedback from 1,402 to
 background TCP capture contained zero ECN-marked packets.
 
 During the exact QUIC intervals, combined client-to-server QUIC and TCP IP load
-averaged 90.6--92.6% of the 20 Mbit/s bottleneck for Reno and 92.6--95.9% for
+averaged 90.6--92.6% of the 20 Mbit/s bottleneck for Reno and 93.0--95.9% for
 Prague at nonzero loads. The 20 Mbit/s background request achieved only 14.14
 Mbit/s alongside Reno QUIC and 14.34 Mbit/s alongside Prague QUIC. The resulting
 plot therefore shows the shared bottleneck directly instead of summing rates

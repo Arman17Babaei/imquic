@@ -46,7 +46,7 @@ deviation.
 ![Five-run Mininet L4S comparison](qemu-evidence/mininet-benchmark-comparison.svg)
 
 The matched-interval link load reached 90.6--92.6% of the bottleneck for Reno
-and 92.6--95.9% for Prague at nonzero background loads. At a 20 Mbit/s request,
+and 93.0--95.9% for Prague at nonzero background loads. At a 20 Mbit/s request,
 classic TCP averaged only 14.14 Mbit/s with Reno QUIC and 14.34 Mbit/s with
 Prague QUIC, making the shared capacity constraint explicit. Prague's mean
 final smoothed RTT was lower at all four loads, while its mean QUIC goodput was
