@@ -222,6 +222,11 @@ and `l4s/qemu-evidence/mininet-benchmark-comparison.svg`. Full per-case metrics,
 iperf3 JSON, qdisc counters, endpoint logs, and pcaps remain under the ignored
 `results/l4s/qemu-mininet-benchmark-<timestamp>/` directory. See
 `l4s/mininet-benchmark.md` for the exact observed table and tunable command.
+The comparison now includes inferred forward drops for QUIC and background TCP:
+QUIC uses the packet-count deficit across the two switch captures, while TCP
+uses retransmissions because ingress GSO prevents direct packet-count matching.
+The forward DualPI2 drop counter is retained in the CSV and JSON as an
+attribution cross-check.
 
 This adds **live L4S/classic coexistence evidence**. It verifies traffic
 classification and marking behavior under several offered classic loads; it

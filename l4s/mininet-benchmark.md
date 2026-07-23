@@ -31,7 +31,12 @@ The concurrent-load measurement sums client-to-server QUIC and TCP IP bytes
 captured during the exact QUIC wall-clock interval. This avoids combining QUIC
 goodput with an iperf3 average measured over a different duration. The generated
 SVG plots mean values with one-standard-deviation error bars and draws the
-configured capacity directly on the concurrent-load panel.
+configured capacity directly on the concurrent-load panel. Its final two panels
+show forward-path packet drops by flow. QUIC drops are inferred from the packet
+count deficit between the client- and server-side switch captures. Because TCP
+GSO coalesces packets in the ingress capture, background drops are inferred from
+forward TCP retransmissions instead. The analyzer also records the forward
+DualPI2 drop counter so the attribution can be checked against the qdisc total.
 
 ## Latest combined evidence
 
@@ -80,6 +85,11 @@ not a formal significance test.
 Across all 60 cases, background TCP had zero ECN-marked packets. All Not-ECT
 runs had zero ECN feedback; every ECT(0) run had capture-visible ECT(0), CE,
 and ACK_ECN CE feedback; every Prague run had ECT(1), CE, and ACK_ECN feedback.
+At nonzero background loads, the mean sum of inferred QUIC and TCP drops was
+within six packets of the mean forward DualPI2 counter in every plotted point.
+The zero-load ECN modes show a two-to-three-packet capture deficit even when the
+qdisc reported no drops, which gives the practical noise floor for this
+capture-based inference.
 
 Override the matrix without editing scripts:
 

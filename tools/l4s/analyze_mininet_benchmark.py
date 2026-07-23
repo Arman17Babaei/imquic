@@ -44,6 +44,9 @@ ROW_FIELDS = (
     "captured_ect1_packets",
     "captured_ce_packets",
     "background_tcp_ecn_packets",
+    "quic_forward_drops",
+    "background_forward_drops",
+    "dualpi2_forward_drops",
     "dualpi2_l4s_packets",
     "dualpi2_ecn_marks",
 )
@@ -88,11 +91,43 @@ def packet_bytes(path, display_filter):
     )
 
 
+def packet_deficit(ingress_packets, egress_packets):
+    """Return packets seen before, but not after, the forward bottleneck."""
+    return max(0, ingress_packets - egress_packets)
+
+
+def inferred_forward_drops(ingress_capture, egress_capture, display_filter):
+    return packet_deficit(
+        packet_count(ingress_capture, display_filter),
+        packet_count(egress_capture, display_filter),
+    )
+
+
 def tc_totals(path):
     text = Path(path).read_text(encoding="utf-8")
     l4s = sum(int(value) for value in re.findall(r"pkts_in_l\s+(\d+)", text))
     marked = sum(int(value) for value in re.findall(r"ecn_mark\s+(\d+)", text))
     return l4s, marked
+
+
+def tc_interface_drops(path, interface):
+    text = Path(path).read_text(encoding="utf-8")
+    device = re.search(
+        rf"^device={re.escape(interface)}\n(.*?)(?=^device=|\Z)",
+        text,
+        re.MULTILINE | re.DOTALL,
+    )
+    if device is None:
+        raise AnalysisError(f"{path}: missing tc statistics for {interface}")
+    dropped = re.search(
+        r"^qdisc dualpi2\b.*?\n"
+        r"\s*Sent\b.*?\(dropped\s+(\d+),",
+        device.group(1),
+        re.MULTILINE | re.DOTALL,
+    )
+    if dropped is None:
+        raise AnalysisError(f"{path}: missing DualPI2 drops for {interface}")
+    return int(dropped.group(1))
 
 
 def iperf_rate(path):
@@ -121,6 +156,22 @@ def analyze_case(directory):
     )
     tcp_ecn_capture = packet_count(
         directory / "switch-client.pcap", "tcp.port == 5201 && ip.dsfield.ecn != 0"
+    )
+    forward_quic_filter = (
+        f"udp.dstport == 4443 && ip.dst == {metadata['server_ip']}"
+    )
+    quic_forward_drops = inferred_forward_drops(
+        directory / "switch-client.pcap",
+        directory / "switch-server.pcap",
+        forward_quic_filter,
+    )
+    background_forward_drops = packet_count(
+        directory / "switch-client.pcap",
+        f"tcp.dstport == 5201 && ip.dst == {metadata['server_ip']} && "
+        "(tcp.analysis.retransmission || tcp.analysis.fast_retransmission)",
+    )
+    dualpi2_forward_drops = tc_interface_drops(
+        directory / "dualpi2-stats.txt", "s1-eth2"
     )
     wall_duration = (
         metadata["quic_finished_epoch"] - metadata["quic_started_epoch"]
@@ -165,6 +216,9 @@ def analyze_case(directory):
         "captured_ect1_packets": ect1_capture,
         "captured_ce_packets": ce_capture,
         "background_tcp_ecn_packets": tcp_ecn_capture,
+        "quic_forward_drops": quic_forward_drops,
+        "background_forward_drops": background_forward_drops,
+        "dualpi2_forward_drops": dualpi2_forward_drops,
         "dualpi2_l4s_packets": l4s_packets,
         "dualpi2_ecn_marks": ecn_marks,
     }
@@ -271,6 +325,9 @@ AGGREGATE_METRICS = (
     "captured_ect0_packets",
     "captured_ect1_packets",
     "captured_ce_packets",
+    "quic_forward_drops",
+    "background_forward_drops",
+    "dualpi2_forward_drops",
     "dualpi2_ecn_marks",
 )
 
@@ -301,13 +358,21 @@ def aggregate_rows(rows):
 
 
 def render_plot(path, aggregates, benchmark):
-    width, height = 1200, 820
     panels = (
         ("combined_wire_mbps", "Concurrent bottleneck load", "Mbit/s", True),
         ("quic_goodput_mbps", "QUIC application goodput", "Mbit/s", False),
         ("final_rtt_us", "Final smoothed RTT", "microseconds", False),
         ("final_ce_packets", "QUIC CE feedback", "packets", False),
+        ("quic_forward_drops", "Inferred forward QUIC drops", "packets", False),
+        (
+            "background_forward_drops",
+            "Inferred forward background TCP drops",
+            "packets",
+            False,
+        ),
     )
+    panel_rows = (len(panels) + 1) // 2
+    width, height = 1200, 140 + panel_rows * 350
     rates = sorted({row["background_target_mbps"] for row in aggregates})
     modes = [mode for mode in MODE_ORDER if any(
         row["mode"] == mode for row in aggregates
@@ -326,10 +391,13 @@ def render_plot(path, aggregates, benchmark):
         f'{benchmark["repetitions"]} repetitions; '
         f'{html.escape(benchmark["bottleneck"])} DualPI2 bottleneck; '
         'error bars show ±1 standard deviation</text>',
+        '<text x="600" y="78" text-anchor="middle" font-size="12">'
+        'QUIC drops are the capture deficit across the forward bottleneck; '
+        'TCP drops are inferred from retransmissions</text>',
     ]
     for index, (metric, title, unit, show_bottleneck) in enumerate(panels):
         panel_x = 70 + (index % 2) * 575
-        panel_y = 105 + (index // 2) * 350
+        panel_y = 120 + (index // 2) * 350
         plot_x, plot_y = panel_x + 65, panel_y + 35
         plot_w, plot_h = 455, 245
         values = [
@@ -428,9 +496,11 @@ def render_plot(path, aggregates, benchmark):
     for index, mode in enumerate(modes):
         x = legend_start + index * legend_width
         svg.extend((
-            f'<line x1="{x}" y1="790" x2="{x + 32}" y2="790" '
+            f'<line x1="{x}" y1="{height - 25}" x2="{x + 32}" '
+            f'y2="{height - 25}" '
             f'stroke="{MODE_COLORS[mode]}" stroke-width="4"/>',
-            f'<text x="{x + 40}" y="795" font-size="13">{MODE_LABELS[mode]}</text>',
+            f'<text x="{x + 40}" y="{height - 20}" font-size="13">'
+            f'{MODE_LABELS[mode]}</text>',
         ))
     svg.append("</svg>")
     path.write_text("\n".join(svg) + "\n", encoding="utf-8")
@@ -468,6 +538,12 @@ def write_results(root, rows, benchmark):
                 "final_rtt_us_mean": aggregate["final_rtt_us_mean"],
                 "final_rtt_us_stdev": aggregate["final_rtt_us_stdev"],
                 "ce_feedback_mean": aggregate["final_ce_packets_mean"],
+                "quic_forward_drops_mean": (
+                    aggregate["quic_forward_drops_mean"]
+                ),
+                "background_forward_drops_mean": (
+                    aggregate["background_forward_drops_mean"]
+                ),
                 "bottleneck_utilization_percent_mean": (
                     aggregate["bottleneck_utilization_percent_mean"]
                 ),
@@ -501,6 +577,21 @@ def write_results(root, rows, benchmark):
 
 
 def self_test():
+    if packet_deficit(120, 97) != 23 or packet_deficit(97, 120) != 0:
+        raise AnalysisError("packet-drop inference self-test failed")
+    with tempfile.TemporaryDirectory() as directory:
+        tc_stats = Path(directory) / "dualpi2-stats.txt"
+        tc_stats.write_text(
+            "device=s1-eth1\n"
+            "qdisc dualpi2 10: parent 1:1\n"
+            " Sent 100 bytes 10 pkt (dropped 3, overlimits 0 requeues 0)\n"
+            "device=s1-eth2\n"
+            "qdisc dualpi2 10: parent 1:1\n"
+            " Sent 200 bytes 20 pkt (dropped 7, overlimits 0 requeues 0)\n",
+            encoding="utf-8",
+        )
+        if tc_interface_drops(tc_stats, "s1-eth2") != 7:
+            raise AnalysisError("DualPI2 directional-drop self-test failed")
     rows = []
     for rate in (0, 10):
         for mode in MODE_ORDER:
