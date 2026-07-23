@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import signal
 import shutil
 import subprocess
@@ -51,9 +52,11 @@ def configure_dualpi2(switch, bottleneck):
                  "handle", "10:", "dualpi2", "target", "1ms", "tupdate", "1ms"])
 
 
-def run_case(client, server, switch, output, mode, background_mbps,
-             transfer_bytes, background_seconds, bottleneck):
-    case = output / f"{mode}-bg-{background_mbps:03d}mbps"
+def run_case(client, server, switch, output, mode, background_mbps, repetition,
+             transfer_bytes, background_seconds, bottleneck, bottleneck_mbps):
+    case = output / (
+        f"{mode}-bg-{background_mbps:03d}mbps-rep-{repetition:02d}"
+    )
     case.mkdir(parents=True)
     configure_dualpi2(switch, bottleneck)
     metadata = {
@@ -62,8 +65,12 @@ def run_case(client, server, switch, output, mode, background_mbps,
         "background_mbps": background_mbps,
         "background_transport": "TCP",
         "background_ecn": "disabled",
+        "repetition": repetition,
         "transfer_bytes": transfer_bytes,
         "bottleneck": bottleneck,
+        "bottleneck_mbps": bottleneck_mbps,
+        "client_ip": client.IP(),
+        "server_ip": server.IP(),
     }
     (case / "metadata.json").write_text(
         json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -112,12 +119,14 @@ def run_case(client, server, switch, output, mode, background_mbps,
             time.sleep(0.5)
 
         started = time.monotonic()
+        metadata["quic_started_epoch"] = time.time()
         client_process = client.popen(
             [str(BINARY), "--client", server.IP(), "4443", str(case / "metrics.csv"),
              controller, str(transfer_bytes)],
             cwd=str(ROOT / "src"), stdout=client_log, stderr=subprocess.STDOUT,
         )
         client_status = client_process.wait(timeout=180)
+        metadata["quic_finished_epoch"] = time.time()
         server_status = server_process.wait(timeout=30)
         metadata["wall_duration_seconds"] = time.monotonic() - started
         metadata["client_status"] = client_status
@@ -153,14 +162,22 @@ def run_case(client, server, switch, output, mode, background_mbps,
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--background-mbps", default="0,5,10,15")
+    parser.add_argument("--background-mbps", default="0,5,10,20")
     parser.add_argument("--bottleneck", default="20mbit")
     parser.add_argument("--transfer-bytes", type=int, default=4 * 1024 * 1024)
     parser.add_argument("--background-seconds", type=int, default=8)
+    parser.add_argument("--repetitions", type=int, default=5)
     args = parser.parse_args()
     rates = [int(value) for value in args.background_mbps.split(",")]
     if not rates or any(rate < 0 for rate in rates):
         parser.error("background rates must be non-negative integers")
+    if args.repetitions <= 0:
+        parser.error("repetitions must be positive")
+    units = {"kbit": 0.001, "mbit": 1.0, "gbit": 1000.0}
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(kbit|mbit|gbit)", args.bottleneck)
+    if match is None:
+        parser.error("bottleneck must use tc rate syntax such as 20mbit")
+    bottleneck_mbps = float(match.group(1)) * units[match.group(2)]
     if os.geteuid() != 0:
         raise SystemExit("Mininet benchmark must run as root inside QEMU")
     for program in ("iperf3", "mn", "ovs-vsctl", "tc", "tcpdump", "tshark"):
@@ -181,8 +198,10 @@ def main():
             ["mn", "--version"], check=True, text=True, capture_output=True
         ).stdout.strip(),
         "background_rates_mbps": rates,
+        "repetitions": args.repetitions,
         "background_transport": "TCP iperf3 with ECN disabled",
         "bottleneck": args.bottleneck,
+        "bottleneck_mbps": bottleneck_mbps,
         "transfer_bytes": args.transfer_bytes,
         "modes": {"l4s-on": "Prague ECT(1)", "l4s-off": "Reno Not-ECT"},
     }
@@ -205,10 +224,18 @@ def main():
         if client.cmd(f"ping -c 1 -W 2 {server.IP()}").find("1 received") < 0:
             raise RuntimeError("Mininet client/server connectivity failed")
         for rate in rates:
-            for mode in ("l4s-off", "l4s-on"):
-                print(f"running {mode} with {rate} Mbps classic TCP background", flush=True)
-                run_case(client, server, switch, args.output, mode, rate,
-                         args.transfer_bytes, args.background_seconds, args.bottleneck)
+            for repetition in range(1, args.repetitions + 1):
+                for mode in ("l4s-off", "l4s-on"):
+                    print(
+                        f"running {mode} with {rate} Mbps classic TCP background "
+                        f"(repetition {repetition}/{args.repetitions})",
+                        flush=True,
+                    )
+                    run_case(
+                        client, server, switch, args.output, mode, rate,
+                        repetition, args.transfer_bytes, args.background_seconds,
+                        args.bottleneck, bottleneck_mbps,
+                    )
     finally:
         net.stop()
         command(["mn", "-c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

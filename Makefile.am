@@ -32,10 +32,11 @@ l4s-timeseries-check:
 l4s-timeseries-guest-check:
 	$(top_srcdir)/tools/l4s/run_timeseries_test.sh $(L4S_RESULT_DIR)
 
-L4S_BENCHMARK_RATES ?= 0,5,10,15
+L4S_BENCHMARK_RATES ?= 0,5,10,20
 L4S_BENCHMARK_BYTES ?= 4194304
 L4S_BENCHMARK_BOTTLENECK ?= 20mbit
 L4S_BENCHMARK_SECONDS ?= 8
+L4S_BENCHMARK_REPETITIONS ?= 5
 L4S_RESULT_DIR ?= $(top_builddir)/results/l4s/manual-run
 
 .PHONY: l4s-mininet-benchmark-check
@@ -47,7 +48,8 @@ l4s-mininet-benchmark-check:
 		--make-variable L4S_BENCHMARK_RATES=$(L4S_BENCHMARK_RATES) \
 		--make-variable L4S_BENCHMARK_BYTES=$(L4S_BENCHMARK_BYTES) \
 		--make-variable L4S_BENCHMARK_BOTTLENECK=$(L4S_BENCHMARK_BOTTLENECK) \
-		--make-variable L4S_BENCHMARK_SECONDS=$(L4S_BENCHMARK_SECONDS)
+		--make-variable L4S_BENCHMARK_SECONDS=$(L4S_BENCHMARK_SECONDS) \
+		--make-variable L4S_BENCHMARK_REPETITIONS=$(L4S_BENCHMARK_REPETITIONS)
 
 .PHONY: l4s-mininet-benchmark-guest-check
 l4s-mininet-benchmark-guest-check:
@@ -56,4 +58,5 @@ l4s-mininet-benchmark-guest-check:
 		--background-mbps $(L4S_BENCHMARK_RATES) \
 		--transfer-bytes $(L4S_BENCHMARK_BYTES) \
 		--bottleneck $(L4S_BENCHMARK_BOTTLENECK) \
-		--background-seconds $(L4S_BENCHMARK_SECONDS)
+		--background-seconds $(L4S_BENCHMARK_SECONDS) \
+		--repetitions $(L4S_BENCHMARK_REPETITIONS)

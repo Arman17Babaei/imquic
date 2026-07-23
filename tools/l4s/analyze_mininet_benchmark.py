@@ -3,9 +3,12 @@
 
 import argparse
 import csv
+import html
 import json
 import re
+import statistics
 import subprocess
+import tempfile
 from pathlib import Path
 
 from analyze_timeseries import AnalysisError, load_samples
@@ -22,6 +25,23 @@ def packet_count(path, display_filter):
         capture_output=True,
     )
     return len(result.stdout.splitlines())
+
+
+def packet_bytes(path, display_filter):
+    result = subprocess.run(
+        [
+            "tshark", "-r", str(path), "-Y", display_filter,
+            "-T", "fields", "-e", "ip.len",
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    return sum(
+        int(value.split(",", 1)[0])
+        for value in result.stdout.splitlines()
+        if value
+    )
 
 
 def tc_totals(path):
@@ -55,13 +75,40 @@ def analyze_case(directory):
     tcp_ecn_capture = packet_count(
         directory / "switch-client.pcap", "tcp.port == 5201 && ip.dsfield.ecn != 0"
     )
+    wall_duration = (
+        metadata["quic_finished_epoch"] - metadata["quic_started_epoch"]
+    )
+    if wall_duration <= 0:
+        raise AnalysisError(f"{directory.name}: invalid wall-clock duration")
+    interval = (
+        f"frame.time_epoch >= {metadata['quic_started_epoch']:.6f} && "
+        f"frame.time_epoch <= {metadata['quic_finished_epoch']:.6f} && "
+        f"ip.dst == {metadata['server_ip']}"
+    )
+    server_capture = directory / "switch-server.pcap"
+    quic_wire_bytes = packet_bytes(
+        server_capture, f"{interval} && udp.dstport == 4443"
+    )
+    background_wire_bytes = packet_bytes(
+        server_capture, f"{interval} && tcp.dstport == 5201"
+    )
+    quic_wire_mbps = quic_wire_bytes * 8 / wall_duration / 1e6
+    background_wire_mbps = background_wire_bytes * 8 / wall_duration / 1e6
+    combined_wire_mbps = quic_wire_mbps + background_wire_mbps
     l4s_packets, ecn_marks = tc_totals(directory / "dualpi2-stats.txt")
     final = samples[-1]
     row = {
         "mode": metadata["mode"],
+        "repetition": metadata["repetition"],
         "background_target_mbps": metadata["background_mbps"],
         "background_actual_mbps": iperf_rate(directory / "iperf-client.json") / 1e6,
         "quic_goodput_mbps": metadata["transfer_bytes"] * 8 / duration_us,
+        "quic_wire_mbps": quic_wire_mbps,
+        "background_wire_mbps": background_wire_mbps,
+        "combined_wire_mbps": combined_wire_mbps,
+        "bottleneck_utilization_percent": (
+            combined_wire_mbps / metadata["bottleneck_mbps"] * 100
+        ),
         "duration_ms": duration_us / 1000,
         "final_rtt_us": final["rtt_us"],
         "final_cwnd_bytes": final["cwnd_bytes"],
@@ -76,6 +123,8 @@ def analyze_case(directory):
     if metadata["mode"] == "l4s-on":
         if final["ect1_packets"] == 0 or ect1_capture == 0 or l4s_packets == 0:
             raise AnalysisError(f"{directory.name}: L4S-on run has no ECT(1) evidence")
+        if final["ce_packets"] == 0 or ce_capture == 0 or ecn_marks == 0:
+            raise AnalysisError(f"{directory.name}: L4S-on run has no CE evidence")
     elif metadata["mode"] == "l4s-off":
         if final["ect1_packets"] != 0 or final["ce_packets"] != 0 or ect1_capture != 0:
             raise AnalysisError(f"{directory.name}: L4S-off run unexpectedly used ECT(1)")
@@ -89,68 +138,317 @@ def analyze_case(directory):
     return row
 
 
+def validate_matrix(rows, expected_repetitions):
+    cases = {}
+    for row in rows:
+        key = (
+            row["background_target_mbps"], row["mode"], row["repetition"]
+        )
+        if key in cases:
+            raise AnalysisError(f"duplicate benchmark case: {key}")
+        cases[key] = row
+    rates = sorted({row["background_target_mbps"] for row in rows})
+    expected_repeats = set(range(1, expected_repetitions + 1))
+    for rate in rates:
+        for mode in ("l4s-off", "l4s-on"):
+            actual = {
+                row["repetition"] for row in rows
+                if row["background_target_mbps"] == rate and row["mode"] == mode
+            }
+            if actual != expected_repeats:
+                raise AnalysisError(
+                    f"background {rate} Mbps {mode} repetitions are "
+                    f"{sorted(actual)}, expected {sorted(expected_repeats)}"
+                )
+
+
 def analyze(root):
+    benchmark = json.loads(
+        (Path(root) / "benchmark.json").read_text(encoding="utf-8")
+    )
     rows = [analyze_case(path) for path in sorted(Path(root).glob("l4s-*-bg-*"))]
     if not rows:
         raise AnalysisError("no benchmark cases found")
-    modes_by_rate = {}
-    for row in rows:
-        modes_by_rate.setdefault(row["background_target_mbps"], set()).add(row["mode"])
-    for rate, modes in modes_by_rate.items():
-        if modes != {"l4s-on", "l4s-off"}:
-            raise AnalysisError(f"background {rate} Mbps does not have paired on/off runs")
-    if max(row["dualpi2_ecn_marks"] for row in rows if row["mode"] == "l4s-on") == 0:
-        raise AnalysisError("no L4S-on case produced a DualPI2 CE mark")
-    return rows
+    validate_matrix(rows, benchmark["repetitions"])
+    for mode in ("l4s-off", "l4s-on"):
+        peak = max(
+            row["bottleneck_utilization_percent"]
+            for row in rows if row["mode"] == mode
+        )
+        if peak < 70:
+            raise AnalysisError(
+                f"{mode} never visibly exercised the bottleneck ({peak:.1f}% peak)"
+            )
+    return rows, benchmark
 
 
-def write_results(root, rows):
+AGGREGATE_METRICS = (
+    "background_actual_mbps",
+    "quic_goodput_mbps",
+    "quic_wire_mbps",
+    "background_wire_mbps",
+    "combined_wire_mbps",
+    "bottleneck_utilization_percent",
+    "final_rtt_us",
+    "final_cwnd_bytes",
+    "final_ect1_packets",
+    "final_ce_packets",
+    "captured_ect1_packets",
+    "captured_ce_packets",
+    "dualpi2_ecn_marks",
+)
+
+
+def aggregate_rows(rows):
+    aggregates = []
+    keys = sorted({
+        (row["background_target_mbps"], row["mode"]) for row in rows
+    })
+    for rate, mode in keys:
+        group = [
+            row for row in rows
+            if row["background_target_mbps"] == rate and row["mode"] == mode
+        ]
+        aggregate = {
+            "mode": mode,
+            "background_target_mbps": rate,
+            "repetitions": len(group),
+        }
+        for metric in AGGREGATE_METRICS:
+            values = [row[metric] for row in group]
+            aggregate[f"{metric}_mean"] = statistics.mean(values)
+            aggregate[f"{metric}_stdev"] = (
+                statistics.stdev(values) if len(values) > 1 else 0.0
+            )
+        aggregates.append(aggregate)
+    return aggregates
+
+
+def render_plot(path, aggregates, benchmark):
+    width, height = 1200, 820
+    panels = (
+        ("combined_wire_mbps", "Concurrent bottleneck load", "Mbit/s", True),
+        ("quic_goodput_mbps", "QUIC application goodput", "Mbit/s", False),
+        ("final_rtt_us", "Final smoothed RTT", "microseconds", False),
+        ("final_ce_packets", "QUIC CE feedback", "packets", False),
+    )
+    rates = sorted({row["background_target_mbps"] for row in aggregates})
+    colors = {"l4s-off": "#c44e52", "l4s-on": "#0072b2"}
+    labels = {"l4s-off": "Reno / Not-ECT", "l4s-on": "Prague / ECT(1)"}
+    svg = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
+        f'height="{height}" viewBox="0 0 {width} {height}">',
+        '<rect width="100%" height="100%" fill="white"/>',
+        '<style>text{font-family:DejaVu Sans,Arial,sans-serif;fill:#222}'
+        '.grid{stroke:#ddd;stroke-width:1}.axis{stroke:#333;stroke-width:1.5}'
+        '.series{fill:none;stroke-width:3}.error{stroke-width:1.5}'
+        '.point{stroke:white;stroke-width:1.5}</style>',
+        '<text x="600" y="34" text-anchor="middle" font-size="22" '
+        'font-weight="bold">Mininet L4S coexistence benchmark</text>',
+        f'<text x="600" y="58" text-anchor="middle" font-size="14">'
+        f'{benchmark["repetitions"]} repetitions; '
+        f'{html.escape(benchmark["bottleneck"])} DualPI2 bottleneck; '
+        'error bars show ±1 standard deviation</text>',
+    ]
+    for index, (metric, title, unit, show_bottleneck) in enumerate(panels):
+        panel_x = 70 + (index % 2) * 575
+        panel_y = 105 + (index // 2) * 350
+        plot_x, plot_y = panel_x + 65, panel_y + 35
+        plot_w, plot_h = 455, 245
+        values = [
+            row[f"{metric}_mean"] + row[f"{metric}_stdev"]
+            for row in aggregates
+        ]
+        if show_bottleneck:
+            values.append(benchmark["bottleneck_mbps"])
+        y_max = max(values) * 1.15 if max(values) > 0 else 1.0
+        x_min, x_max = min(rates), max(rates)
+
+        def x_coord(rate):
+            if x_max == x_min:
+                return plot_x + plot_w / 2
+            return plot_x + (rate - x_min) / (x_max - x_min) * plot_w
+
+        def y_coord(value):
+            return plot_y + plot_h - value / y_max * plot_h
+
+        svg.append(
+            f'<text x="{panel_x + 292}" y="{panel_y + 16}" '
+            f'text-anchor="middle" font-size="16" font-weight="bold">'
+            f'{html.escape(title)}</text>'
+        )
+        for tick in range(5):
+            value = y_max * tick / 4
+            y = y_coord(value)
+            svg.extend((
+                f'<line class="grid" x1="{plot_x}" y1="{y:.1f}" '
+                f'x2="{plot_x + plot_w}" y2="{y:.1f}"/>',
+                f'<text x="{plot_x - 9}" y="{y + 5:.1f}" text-anchor="end" '
+                f'font-size="11">{value:.1f}</text>',
+            ))
+        svg.extend((
+            f'<line class="axis" x1="{plot_x}" y1="{plot_y}" '
+            f'x2="{plot_x}" y2="{plot_y + plot_h}"/>',
+            f'<line class="axis" x1="{plot_x}" y1="{plot_y + plot_h}" '
+            f'x2="{plot_x + plot_w}" y2="{plot_y + plot_h}"/>',
+            f'<text x="{panel_x + 12}" y="{plot_y + plot_h / 2}" '
+            f'transform="rotate(-90 {panel_x + 12} {plot_y + plot_h / 2})" '
+            f'text-anchor="middle" font-size="12">{html.escape(unit)}</text>',
+            f'<text x="{plot_x + plot_w / 2}" y="{plot_y + plot_h + 42}" '
+            f'text-anchor="middle" font-size="12">Classic TCP target (Mbit/s)</text>',
+        ))
+        for rate in rates:
+            x = x_coord(rate)
+            svg.append(
+                f'<text x="{x:.1f}" y="{plot_y + plot_h + 20}" '
+                f'text-anchor="middle" font-size="11">{rate}</text>'
+            )
+        if show_bottleneck:
+            y = y_coord(benchmark["bottleneck_mbps"])
+            svg.extend((
+                f'<line x1="{plot_x}" y1="{y:.1f}" x2="{plot_x + plot_w}" '
+                f'y2="{y:.1f}" stroke="#222" stroke-width="2" '
+                'stroke-dasharray="8 5"/>',
+                f'<text x="{plot_x + plot_w - 4}" y="{y - 7:.1f}" '
+                f'text-anchor="end" font-size="11">configured bottleneck '
+                f'{benchmark["bottleneck_mbps"]:g} Mbit/s</text>',
+            ))
+        for mode in ("l4s-off", "l4s-on"):
+            series = sorted(
+                (row for row in aggregates if row["mode"] == mode),
+                key=lambda row: row["background_target_mbps"],
+            )
+            points = " ".join(
+                f'{x_coord(row["background_target_mbps"]):.1f},'
+                f'{y_coord(row[f"{metric}_mean"]):.1f}'
+                for row in series
+            )
+            svg.append(
+                f'<polyline class="series" stroke="{colors[mode]}" '
+                f'points="{points}"/>'
+            )
+            for row in series:
+                x = x_coord(row["background_target_mbps"])
+                mean = row[f"{metric}_mean"]
+                deviation = row[f"{metric}_stdev"]
+                y_low = y_coord(max(0, mean - deviation))
+                y_high = y_coord(mean + deviation)
+                y = y_coord(mean)
+                svg.extend((
+                    f'<line class="error" stroke="{colors[mode]}" x1="{x:.1f}" '
+                    f'y1="{y_low:.1f}" x2="{x:.1f}" y2="{y_high:.1f}"/>',
+                    f'<line class="error" stroke="{colors[mode]}" '
+                    f'x1="{x - 5:.1f}" y1="{y_low:.1f}" x2="{x + 5:.1f}" '
+                    f'y2="{y_low:.1f}"/>',
+                    f'<line class="error" stroke="{colors[mode]}" '
+                    f'x1="{x - 5:.1f}" y1="{y_high:.1f}" x2="{x + 5:.1f}" '
+                    f'y2="{y_high:.1f}"/>',
+                    f'<circle class="point" cx="{x:.1f}" cy="{y:.1f}" r="5" '
+                    f'fill="{colors[mode]}"/>',
+                ))
+    for index, mode in enumerate(("l4s-off", "l4s-on")):
+        x = 430 + index * 230
+        svg.extend((
+            f'<line x1="{x}" y1="790" x2="{x + 32}" y2="790" '
+            f'stroke="{colors[mode]}" stroke-width="4"/>',
+            f'<text x="{x + 40}" y="795" font-size="13">{labels[mode]}</text>',
+        ))
+    svg.append("</svg>")
+    path.write_text("\n".join(svg) + "\n", encoding="utf-8")
+
+
+def write_results(root, rows, benchmark):
     fields = list(rows[0])
     with (root / "summary.csv").open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
+    aggregates = aggregate_rows(rows)
+    aggregate_fields = list(aggregates[0])
+    with (root / "aggregate.csv").open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(
+            stream, fieldnames=aggregate_fields, lineterminator="\n"
+        )
+        writer.writeheader()
+        writer.writerows(aggregates)
+    aggregate_index = {
+        (row["background_target_mbps"], row["mode"]): row
+        for row in aggregates
+    }
     comparisons = []
     for rate in sorted({row["background_target_mbps"] for row in rows}):
-        pair = {
-            row["mode"]: row
-            for row in rows
-            if row["background_target_mbps"] == rate
-        }
-        enabled = pair["l4s-on"]
-        disabled = pair["l4s-off"]
+        enabled = aggregate_index[(rate, "l4s-on")]
+        disabled = aggregate_index[(rate, "l4s-off")]
         comparisons.append({
             "background_target_mbps": rate,
-            "l4s_on_goodput_mbps": enabled["quic_goodput_mbps"],
-            "l4s_off_goodput_mbps": disabled["quic_goodput_mbps"],
-            "goodput_delta_mbps": (
-                enabled["quic_goodput_mbps"] - disabled["quic_goodput_mbps"]
+            "l4s_on_goodput_mbps_mean": enabled["quic_goodput_mbps_mean"],
+            "l4s_off_goodput_mbps_mean": disabled["quic_goodput_mbps_mean"],
+            "goodput_delta_mbps_mean": (
+                enabled["quic_goodput_mbps_mean"]
+                - disabled["quic_goodput_mbps_mean"]
             ),
-            "l4s_on_final_rtt_us": enabled["final_rtt_us"],
-            "l4s_off_final_rtt_us": disabled["final_rtt_us"],
-            "l4s_on_ce_feedback": enabled["final_ce_packets"],
-            "l4s_off_ce_feedback": disabled["final_ce_packets"],
+            "l4s_on_final_rtt_us_mean": enabled["final_rtt_us_mean"],
+            "l4s_off_final_rtt_us_mean": disabled["final_rtt_us_mean"],
+            "l4s_on_ce_feedback_mean": enabled["final_ce_packets_mean"],
+            "l4s_off_ce_feedback_mean": disabled["final_ce_packets_mean"],
+            "l4s_on_bottleneck_utilization_percent_mean": (
+                enabled["bottleneck_utilization_percent_mean"]
+            ),
+            "l4s_off_bottleneck_utilization_percent_mean": (
+                disabled["bottleneck_utilization_percent_mean"]
+            ),
         })
     result = {
         "status": "pass",
         "cases": len(rows),
+        "repetitions": benchmark["repetitions"],
+        "bottleneck_mbps": benchmark["bottleneck_mbps"],
         "background_rates_mbps": sorted({row["background_target_mbps"] for row in rows}),
+        "aggregates": aggregates,
         "comparisons": comparisons,
         "rows": rows,
     }
     (root / "analysis.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    print(json.dumps(result, indent=2, sort_keys=True))
+    render_plot(root / "comparison.svg", aggregates, benchmark)
+    print(json.dumps({
+        "status": result["status"],
+        "cases": result["cases"],
+        "repetitions": result["repetitions"],
+        "bottleneck_mbps": result["bottleneck_mbps"],
+        "background_rates_mbps": result["background_rates_mbps"],
+        "plot": str(root / "comparison.svg"),
+    }, indent=2, sort_keys=True))
 
 
 def self_test():
-    good = {
-        "l4s-on": {"ect1": 2, "ce": 1, "capture": 3},
-        "l4s-off": {"ect1": 0, "ce": 0, "capture": 0},
+    rows = []
+    for rate in (0, 10):
+        for mode in ("l4s-off", "l4s-on"):
+            for repetition in range(1, 6):
+                row = {
+                    "mode": mode,
+                    "repetition": repetition,
+                    "background_target_mbps": rate,
+                }
+                for metric in AGGREGATE_METRICS:
+                    row[metric] = rate + repetition + (1 if mode == "l4s-on" else 0)
+                rows.append(row)
+    validate_matrix(rows, 5)
+    aggregates = aggregate_rows(rows)
+    if len(aggregates) != 4 or aggregates[0]["repetitions"] != 5:
+        raise AnalysisError("benchmark aggregation self-test failed")
+    benchmark = {
+        "repetitions": 5,
+        "bottleneck": "20mbit",
+        "bottleneck_mbps": 20.0,
     }
-    if good["l4s-on"]["ect1"] <= 0 or good["l4s-off"]["capture"] != 0:
-        raise AnalysisError("benchmark analyzer self-test failed")
+    with tempfile.TemporaryDirectory() as directory:
+        plot = Path(directory) / "comparison.svg"
+        render_plot(plot, aggregates, benchmark)
+        if not plot.read_text(encoding="utf-8").startswith("<svg"):
+            raise AnalysisError("benchmark plot self-test failed")
     print("Mininet benchmark analyzer self-test: PASS")
 
 
@@ -165,7 +463,8 @@ def main():
     if args.results is None:
         parser.error("results directory is required")
     try:
-        write_results(args.results, analyze(args.results))
+        rows, benchmark = analyze(args.results)
+        write_results(args.results, rows, benchmark)
     except (AnalysisError, KeyError, ValueError, json.JSONDecodeError) as exc:
         raise SystemExit(f"Mininet L4S benchmark: FAIL: {exc}") from exc
 
