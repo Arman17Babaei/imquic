@@ -196,6 +196,11 @@ int imquic_get_transport_metrics(imquic_connection *conn,
 	metrics->min_rtt_us = quality.rtt_min;
 	metrics->congestion_window_bytes = quality.cwin;
 	metrics->bytes_in_flight = quality.bytes_in_transit;
+	uint64_t data_sent = picoquic_get_data_sent(conn->piconn);
+	imquic_mutex_lock(&conn->mutex);
+	metrics->queued_stream_bytes = conn->stream_bytes_queued > data_sent ?
+		conn->stream_bytes_queued - data_sent : 0;
+	imquic_mutex_unlock(&conn->mutex);
 	metrics->pacing_rate_bytes_per_second = quality.pacing_rate;
 	if(picoquic_get_ecn_metrics(conn->piconn, &ecn) == 0) {
 		metrics->ect0_packets = ecn.ect0_packets;

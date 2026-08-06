@@ -190,6 +190,9 @@ int imquic_connection_send_on_stream(imquic_connection *conn, uint64_t stream_id
 	event->stream_id = stream_id;
 	event->fin = complete;
 	event->data = imquic_buffer_create(bytes, length);
+	imquic_mutex_lock(&conn->mutex);
+	conn->stream_bytes_queued += length;
+	imquic_mutex_unlock(&conn->mutex);
 	g_async_queue_push(conn->queued_events, event);
 	/* Update the stream status, if needed */
 	imquic_mutex_lock(&stream->mutex);

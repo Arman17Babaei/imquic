@@ -206,6 +206,7 @@ typedef struct imquic_transport_metrics {
 	uint64_t min_rtt_us;
 	uint64_t congestion_window_bytes;
 	uint64_t bytes_in_flight;
+	uint64_t queued_stream_bytes;
 	uint64_t pacing_rate_bytes_per_second;
 	uint64_t ect0_packets;
 	uint64_t ect1_packets;
