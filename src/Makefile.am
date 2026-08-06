@@ -70,14 +70,19 @@ libimquic_la_LIBADD = \
 BUILT_SOURCES = version.c
 
 check_PROGRAMS = imquic-l4s-test
+noinst_PROGRAMS = imquic-sustained-moq
 TESTS = $(check_PROGRAMS)
 
 check-local:
 	python3 $(top_srcdir)/tools/l4s/analyze_timeseries.py --self-test
 	python3 $(top_srcdir)/tools/l4s/analyze_mininet_benchmark.py --self-test
+	python3 $(top_srcdir)/tools/l4s/analyze_sustained_coexistence.py --self-test
 imquic_l4s_test_SOURCES = l4s-test.c
-imquic_l4s_test_CFLAGS = $(AM_CFLAGS) $(IMQUIC_CFLAGS)
+imquic_l4s_test_CFLAGS = $(AM_CFLAGS) $(IMQUIC_CFLAGS) $(PICOQUIC_CFLAGS)
 imquic_l4s_test_LDADD = libimquic.la $(IMQUIC_LIBS)
+imquic_sustained_moq_SOURCES = sustained-moq-test.c
+imquic_sustained_moq_CFLAGS = $(AM_CFLAGS) $(IMQUIC_CFLAGS) $(PICOQUIC_CFLAGS)
+imquic_sustained_moq_LDADD = libimquic.la $(IMQUIC_LIBS)
 
 directory = ../.git
 dir_target = $(directory)-$(wildcard $(directory))
