@@ -1,0 +1,77 @@
+name: Temporary MOQT v19 merge
+
+on:
+  push:
+    branches:
+      - agent/moqt-v19-ci-merge
+
+permissions:
+  contents: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge upstream MOQT v19
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/meetecho/imquic.git
+          git fetch upstream 170db34807c907158f389cd5d217633ca996f347
+
+          set +e
+          git merge --no-commit --no-ff 170db34807c907158f389cd5d217633ca996f347
+          merge_status=$?
+          set -e
+
+          if [ "$merge_status" -ne 0 ]; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            if [ "$conflicts" != "src/imquic-moq.c" ]; then
+              echo "Unexpected merge conflicts:" >&2
+              printf '%s\n' "$conflicts" >&2
+              exit 1
+            fi
+
+            # Keep the upstream v19 MoQ implementation, then reapply the
+            # endpoint CC/ECN configuration hooks from imquic-l4s-prague.
+            git checkout --theirs src/imquic-moq.c
+            python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/imquic-moq.c")
+          text = path.read_text()
+          needle = "\t\t} else if(property == IMQUIC_CONFIG_MOQ_GREASE) {\n\t\t\tconfig.moq_grease = va_arg(args, gboolean);\n"
+          replacement = needle + (
+              "\t\t} else if(property == IMQUIC_CONFIG_CONGESTION_CONTROL) {\n"
+              "\t\t\tconfig.congestion_controller = va_arg(args, int);\n"
+              "\t\t} else if(property == IMQUIC_CONFIG_CONGESTION_OPTIONS) {\n"
+              "\t\t\tconfig.congestion_options = va_arg(args, char *);\n"
+              "\t\t} else if(property == IMQUIC_CONFIG_ECN) {\n"
+              "\t\t\tconfig.ecn_mode = va_arg(args, int);\n"
+          )
+          count = text.count(needle)
+          if count != 2:
+              raise SystemExit(f"expected 2 MoQ constructor anchors, found {count}")
+          path.write_text(text.replace(needle, replacement))
+          PY
+            git add src/imquic-moq.c
+          fi
+
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            echo "Unresolved merge conflicts remain" >&2
+            git diff --name-only --diff-filter=U >&2
+            exit 1
+          fi
+
+          grep -q 'IMQUIC_MOQ_VERSION_19' src/imquic-moq.c
+          test "$(grep -c 'config.congestion_controller = va_arg(args, int);' src/imquic-moq.c)" -eq 2
+          test "$(grep -c 'config.ecn_mode = va_arg(args, int);' src/imquic-moq.c)" -eq 2
+          git diff --check
+          git commit -m "merge: sync upstream MOQT draft-19 support"
+          git push --force origin HEAD:refs/heads/agent/moqt-v19-merged
