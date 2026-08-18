@@ -36,6 +36,7 @@ typedef struct demo_options {
 	int join_offset;
 	const char *payload_type;
 	const char *target_file;
+	gboolean test_filter_ranges;
 	const char *ip;
 	int port;
 	const char *remote_host;
@@ -54,6 +55,7 @@ typedef struct demo_options {
 	gboolean qlog_moq_messages;
 	gboolean qlog_moq_objects;
 	int debug_level;
+	gboolean debug_timestamps;
 	gboolean debug_locks;
 	gboolean debug_refcounts;
 } demo_options;
