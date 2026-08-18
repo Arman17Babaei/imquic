@@ -629,6 +629,13 @@ static void imquic_demo_incoming_object(imquic_connection *conn, imquic_moq_obje
 						imquic_moq_property_type_str(moq_version, prop->id), timestamp);
 					break;
 				}
+				case IMQUIC_MOQ_LOC_AUDIO_CONFIG: {
+					/* FIXME Currently unused */
+					IMQUIC_LOG(IMQUIC_LOG_LOCPROP, "  -- -- %s: %zu bytes\n",
+						imquic_moq_property_type_str(moq_version, prop->id),
+						prop->value.data.length);
+					break;
+				}
 				case IMQUIC_MOQ_LOC_VIDEO_CONFIG: {
 					loc_extradata = &prop->value.data;
 					IMQUIC_LOG(IMQUIC_LOG_LOCPROP, "  -- -- %s: %zu bytes\n",
@@ -871,6 +878,7 @@ int main(int argc, char *argv[]) {
 	}
 	/* Logging level */
 	imquic_set_log_level(options.debug_level);
+	imquic_set_log_timestamps(options.debug_timestamps);
 	/* Debugging */
 	if(options.debug_locks)
 		imquic_set_lock_debugging(TRUE);
