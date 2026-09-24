@@ -213,6 +213,10 @@ typedef struct imquic_transport_metrics {
 	uint64_t ce_packets;
 	uint32_t prague_alpha_numerator;
 	uint32_t prague_alpha_denominator;
+	/*! Cumulative bytes reported sent by picoquic for this connection */
+	uint64_t data_sent_bytes;
+	/*! Cumulative bytes reported received by picoquic for this connection */
+	uint64_t data_received_bytes;
 } imquic_transport_metrics;
 
 int imquic_get_transport_metrics(imquic_connection *conn,
@@ -376,6 +380,12 @@ typedef enum imquic_config {
 	IMQUIC_CONFIG_ECN,
 	/*! \brief Generic user data, if any (void pointer) */
 	IMQUIC_CONFIG_USER_DATA,
+	/*! \brief QUIC initial maximum bidirectional stream count (integer; 0 keeps the default) */
+	IMQUIC_CONFIG_MAX_BIDI_STREAMS,
+	/*! \brief QUIC initial maximum unidirectional stream count (integer; 0 keeps the default) */
+	IMQUIC_CONFIG_MAX_UNI_STREAMS,
+	/*! \brief Locally advertised maximum concurrent MOQT REQUEST_UPDATE requests (integer; 0 keeps the default of 1) */
+	IMQUIC_CONFIG_MOQ_MAX_REQUEST_UPDATES,
 	/*! \brief Must be the last property, followed by NULL */
 	IMQUIC_CONFIG_DONE,
 } imquic_config;

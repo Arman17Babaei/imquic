@@ -205,6 +205,12 @@ const char *imquic_config_str(imquic_config type) {
 			return "IMQUIC_CONFIG_MOQ_VERSION";
 		case IMQUIC_CONFIG_MOQ_GREASE:
 			return "IMQUIC_CONFIG_MOQ_GREASE";
+		case IMQUIC_CONFIG_MAX_BIDI_STREAMS:
+			return "IMQUIC_CONFIG_MAX_BIDI_STREAMS";
+		case IMQUIC_CONFIG_MAX_UNI_STREAMS:
+			return "IMQUIC_CONFIG_MAX_UNI_STREAMS";
+		case IMQUIC_CONFIG_MOQ_MAX_REQUEST_UPDATES:
+			return "IMQUIC_CONFIG_MOQ_MAX_REQUEST_UPDATES";
 		case IMQUIC_CONFIG_CONGESTION_CONTROL:
 			return "IMQUIC_CONFIG_CONGESTION_CONTROL";
 		case IMQUIC_CONFIG_CONGESTION_OPTIONS:
@@ -298,6 +304,13 @@ imquic_server *imquic_create_server(const char *name, ...) {
 		} else if(property == IMQUIC_CONFIG_MOQ_GREASE) {
 			IMQUIC_LOG(IMQUIC_LOG_WARN, "%s is ignored when creating generic endpoints\n", imquic_config_str(property));
 			va_arg(args, gboolean);
+		} else if(property == IMQUIC_CONFIG_MAX_BIDI_STREAMS) {
+			config.max_bidi_streams = va_arg(args, int);
+		} else if(property == IMQUIC_CONFIG_MAX_UNI_STREAMS) {
+			config.max_uni_streams = va_arg(args, int);
+		} else if(property == IMQUIC_CONFIG_MOQ_MAX_REQUEST_UPDATES) {
+			IMQUIC_LOG(IMQUIC_LOG_WARN, "%s is ignored when creating generic endpoints\n", imquic_config_str(property));
+			va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_CONGESTION_CONTROL) {
 			config.congestion_controller = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_CONGESTION_OPTIONS) {
@@ -390,6 +403,13 @@ imquic_client *imquic_create_client(const char *name, ...) {
 		} else if(property == IMQUIC_CONFIG_MOQ_GREASE) {
 			IMQUIC_LOG(IMQUIC_LOG_WARN, "%s is ignored when creating generic endpoints\n", imquic_config_str(property));
 			va_arg(args, gboolean);
+		} else if(property == IMQUIC_CONFIG_MAX_BIDI_STREAMS) {
+			config.max_bidi_streams = va_arg(args, int);
+		} else if(property == IMQUIC_CONFIG_MAX_UNI_STREAMS) {
+			config.max_uni_streams = va_arg(args, int);
+		} else if(property == IMQUIC_CONFIG_MOQ_MAX_REQUEST_UPDATES) {
+			IMQUIC_LOG(IMQUIC_LOG_WARN, "%s is ignored when creating generic endpoints\n", imquic_config_str(property));
+			va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_CONGESTION_CONTROL) {
 			config.congestion_controller = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_CONGESTION_OPTIONS) {

@@ -45,6 +45,10 @@ imquic.pc
 *.log
 *.trs
 imquic-l4s-test
+imquic-moq-priority-test
+imquic-moq-relay-scheduler-test
+imquic-sustained-moq
+imquic-fetch-concurrency
 test-driver
 
 .deps/

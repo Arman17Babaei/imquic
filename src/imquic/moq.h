@@ -1701,6 +1701,13 @@ int imquic_moq_reject_fetch(imquic_connection *conn, uint64_t request_id,
  * @param request_id The unique \c request_id value associated to the subscription to cancel_fetch from
  * @returns 0 in case of success, a negative integer otherwise */
 int imquic_moq_cancel_fetch(imquic_connection *conn, uint64_t request_id);
+/*! \brief Persist a FETCH Subscriber Priority and reprioritize its response stream, if created
+ * @note Lower numeric priority values are more urgent.
+ * @param conn The imquic_connection that owns the FETCH
+ * @param request_id The request ID associated with the FETCH
+ * @param priority The new Subscriber Priority
+ * @returns 0 in case of success, a negative integer for an unknown or non-FETCH request */
+int imquic_moq_set_fetch_priority(imquic_connection *conn, uint64_t request_id, uint8_t priority);
 /*! \brief Function to send a \c TRACK_STATUS request
  * @param conn The imquic_connection to send the request on
  * @param request_id A unique request ID to associate to this request

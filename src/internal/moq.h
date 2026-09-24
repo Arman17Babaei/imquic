@@ -460,6 +460,8 @@ typedef struct imquic_moq_subscription {
 	uint64_t track_alias;
 	/*! \brief Whether this is a FETCH */
 	gboolean fetch;
+	/*! \brief Current Subscriber Priority for this request (lower is more urgent) */
+	uint8_t subscriber_priority;
 	/*! \brief If this is a FETCH stream, whether it's in ascending or descending order */
 	gboolean ascending;
 	/*! \brief Stream for this subscription, in case it's a single one */

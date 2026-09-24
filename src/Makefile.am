@@ -69,7 +69,7 @@ libimquic_la_LIBADD = \
 
 BUILT_SOURCES = version.c
 
-check_PROGRAMS = imquic-l4s-test
+check_PROGRAMS = imquic-l4s-test imquic-moq-priority-test
 noinst_PROGRAMS = imquic-sustained-moq
 TESTS = $(check_PROGRAMS)
 
@@ -80,6 +80,9 @@ check-local:
 imquic_l4s_test_SOURCES = l4s-test.c
 imquic_l4s_test_CFLAGS = $(AM_CFLAGS) $(IMQUIC_CFLAGS) $(PICOQUIC_CFLAGS)
 imquic_l4s_test_LDADD = libimquic.la $(IMQUIC_LIBS)
+imquic_moq_priority_test_SOURCES = moq-priority-test.c
+imquic_moq_priority_test_CFLAGS = $(AM_CFLAGS) $(IMQUIC_CFLAGS) $(PICOQUIC_CFLAGS)
+imquic_moq_priority_test_LDADD = libimquic.la $(IMQUIC_LIBS)
 imquic_sustained_moq_SOURCES = sustained-moq-test.c
 imquic_sustained_moq_CFLAGS = $(AM_CFLAGS) $(IMQUIC_CFLAGS) $(PICOQUIC_CFLAGS)
 imquic_sustained_moq_LDADD = libimquic.la $(IMQUIC_LIBS)

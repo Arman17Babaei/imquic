@@ -90,6 +90,12 @@ imquic_server *imquic_create_moq_server(const char *name, ...) {
 			config.moq_version = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_MOQ_GREASE) {
 			config.moq_grease = va_arg(args, gboolean);
+		} else if(property == IMQUIC_CONFIG_MAX_BIDI_STREAMS) {
+			config.max_bidi_streams = va_arg(args, int);
+		} else if(property == IMQUIC_CONFIG_MAX_UNI_STREAMS) {
+			config.max_uni_streams = va_arg(args, int);
+		} else if(property == IMQUIC_CONFIG_MOQ_MAX_REQUEST_UPDATES) {
+			config.moq_max_request_updates = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_CONGESTION_CONTROL) {
 			config.congestion_controller = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_CONGESTION_OPTIONS) {
@@ -202,6 +208,12 @@ imquic_client *imquic_create_moq_client(const char *name, ...) {
 			config.moq_version = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_MOQ_GREASE) {
 			config.moq_grease = va_arg(args, gboolean);
+		} else if(property == IMQUIC_CONFIG_MAX_BIDI_STREAMS) {
+			config.max_bidi_streams = va_arg(args, int);
+		} else if(property == IMQUIC_CONFIG_MAX_UNI_STREAMS) {
+			config.max_uni_streams = va_arg(args, int);
+		} else if(property == IMQUIC_CONFIG_MOQ_MAX_REQUEST_UPDATES) {
+			config.moq_max_request_updates = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_CONGESTION_CONTROL) {
 			config.congestion_controller = va_arg(args, int);
 		} else if(property == IMQUIC_CONFIG_CONGESTION_OPTIONS) {

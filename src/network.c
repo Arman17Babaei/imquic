@@ -219,6 +219,12 @@ imquic_network_endpoint *imquic_network_endpoint_create(imquic_configuration *co
 		IMQUIC_LOG(IMQUIC_LOG_ERR, "Can't create endpoint, missing configuration\n");
 		return NULL;
 	}
+	if(config->max_bidi_streams < 0 || config->max_uni_streams < 0 ||
+			config->moq_max_request_updates < 0) {
+		IMQUIC_LOG(IMQUIC_LOG_ERR, "[%s] Stream and REQUEST_UPDATE limits cannot be negative\n",
+			config->name ? config->name : "??");
+		return NULL;
+	}
 	if(!config->raw_quic && !config->webtransport)
 		config->raw_quic = TRUE;
 	if(config->name == NULL)
@@ -444,6 +450,7 @@ imquic_network_endpoint *imquic_network_endpoint_create(imquic_configuration *co
 	ne->port = port;
 	ne->congestion_controller = config->congestion_controller;
 	ne->congestion_options = g_strdup(config->congestion_options);
+	ne->moq_max_request_updates = config->moq_max_request_updates;
 	if(family == AF_INET) {
 		ne->local_address.addrlen = sizeof(address);
 		memcpy(&ne->local_address.addr, &address, ne->local_address.addrlen);

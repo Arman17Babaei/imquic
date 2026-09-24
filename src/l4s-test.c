@@ -1,5 +1,7 @@
 #include "imquic/imquic.h"
+#include "imquic/moq.h"
 
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,12 +19,22 @@ static volatile gint test_done;
 static volatile gint test_failed;
 static volatile gint server_complete;
 static imquic_transport_metrics final_metrics;
+static imquic_transport_metrics initial_metrics;
 static gpointer active_client_connection;
 static gboolean expect_prague = TRUE;
 static unsigned int network_duration_seconds;
 static volatile gint64 traffic_started_us;
 static volatile gint64 server_first_received_us;
 static volatile gint64 server_last_received_us;
+
+G_STATIC_ASSERT(IMQUIC_CONFIG_CONGESTION_CONTROL == 27);
+G_STATIC_ASSERT(IMQUIC_CONFIG_CONGESTION_OPTIONS == 28);
+G_STATIC_ASSERT(IMQUIC_CONFIG_ECN == 29);
+G_STATIC_ASSERT(IMQUIC_CONFIG_USER_DATA == 30);
+G_STATIC_ASSERT(offsetof(imquic_transport_metrics, data_sent_bytes) >
+	offsetof(imquic_transport_metrics, prague_alpha_denominator));
+G_STATIC_ASSERT(offsetof(imquic_transport_metrics, data_received_bytes) >
+	offsetof(imquic_transport_metrics, data_sent_bytes));
 
 static void fail_test(const char *message)
 {
@@ -96,6 +108,10 @@ static void client_new_connection(imquic_connection *conn, void *user_data)
 	(void)user_data;
 	imquic_connection_ref(conn);
 	g_atomic_pointer_set(&active_client_connection, conn);
+	if(imquic_get_transport_metrics(conn, &initial_metrics) != 0) {
+		fail_test("client failed to read initial transport metrics");
+		return;
+	}
 	traffic_started_us = g_get_monotonic_time();
 	if(imquic_new_stream_id(conn, TRUE, &stream_id) != 0 ||
 		imquic_send_on_stream(conn, stream_id, test_payload,
@@ -123,6 +139,32 @@ static int invalid_options_test(void)
 		IMQUIC_CONFIG_DONE, NULL);
 	if(server != NULL) {
 		fprintf(stderr, "invalid Prague options were accepted\n");
+		imquic_shutdown_endpoint(server);
+		return -1;
+	}
+	server = imquic_create_server("invalid-stream-limit",
+		IMQUIC_CONFIG_INIT,
+		IMQUIC_CONFIG_LOCAL_PORT, 0,
+		IMQUIC_CONFIG_TLS_CERT, TEST_CERT_PATH,
+		IMQUIC_CONFIG_TLS_KEY, TEST_KEY_PATH,
+		IMQUIC_CONFIG_ALPN, "imquic-l4s-test",
+		IMQUIC_CONFIG_MAX_BIDI_STREAMS, -1,
+		IMQUIC_CONFIG_DONE, NULL);
+	if(server != NULL) {
+		fprintf(stderr, "negative QUIC stream limit was accepted\n");
+		imquic_shutdown_endpoint(server);
+		return -1;
+	}
+	server = imquic_create_moq_server("invalid-request-update-limit",
+		IMQUIC_CONFIG_INIT,
+		IMQUIC_CONFIG_LOCAL_PORT, 0,
+		IMQUIC_CONFIG_TLS_CERT, TEST_CERT_PATH,
+		IMQUIC_CONFIG_TLS_KEY, TEST_KEY_PATH,
+		IMQUIC_CONFIG_RAW_QUIC, TRUE,
+		IMQUIC_CONFIG_MOQ_MAX_REQUEST_UPDATES, -1,
+		IMQUIC_CONFIG_DONE, NULL);
+	if(server != NULL) {
+		fprintf(stderr, "negative MOQT request-update limit was accepted\n");
 		imquic_shutdown_endpoint(server);
 		return -1;
 	}
@@ -180,6 +222,7 @@ static int loopback_traffic_test(void)
 	g_atomic_int_set(&test_done, 0);
 	g_atomic_int_set(&test_failed, 0);
 	memset(&final_metrics, 0, sizeof(final_metrics));
+	memset(&initial_metrics, 0, sizeof(initial_metrics));
 
 	server = imquic_create_server("prague-traffic-server",
 		IMQUIC_CONFIG_INIT,
@@ -190,6 +233,8 @@ static int loopback_traffic_test(void)
 		IMQUIC_CONFIG_ALPN, "imquic-l4s-test",
 		IMQUIC_CONFIG_CONGESTION_CONTROL, IMQUIC_CONGESTION_PRAGUE,
 		IMQUIC_CONFIG_CONGESTION_OPTIONS, prague_options,
+		IMQUIC_CONFIG_MAX_BIDI_STREAMS, 64,
+		IMQUIC_CONFIG_MAX_UNI_STREAMS, 64,
 		IMQUIC_CONFIG_DONE, NULL);
 	if(server == NULL) {
 		ret = -1;
@@ -210,6 +255,8 @@ static int loopback_traffic_test(void)
 		IMQUIC_CONFIG_ALPN, "imquic-l4s-test",
 		IMQUIC_CONFIG_CONGESTION_CONTROL, IMQUIC_CONGESTION_PRAGUE,
 		IMQUIC_CONFIG_CONGESTION_OPTIONS, prague_options,
+		IMQUIC_CONFIG_MAX_BIDI_STREAMS, 64,
+		IMQUIC_CONFIG_MAX_UNI_STREAMS, 64,
 		IMQUIC_CONFIG_DONE, NULL);
 	if(client == NULL) {
 		ret = -1;
@@ -227,6 +274,10 @@ static int loopback_traffic_test(void)
 		fprintf(stderr, "timed out waiting for IMQUIC Prague traffic\n");
 		ret = -1;
 	} else if(g_atomic_int_get(&test_failed)) {
+		ret = -1;
+	} else if(final_metrics.data_sent_bytes <= initial_metrics.data_sent_bytes ||
+			final_metrics.data_received_bytes <= initial_metrics.data_received_bytes) {
+		fprintf(stderr, "transport byte counters did not increase during loopback traffic\n");
 		ret = -1;
 	} else {
 		printf("IMQUIC Prague traffic: sent=%u, echoed=%" G_GUINT64_FORMAT
@@ -265,6 +316,7 @@ static void prepare_payload(void)
 	server_first_received_us = 0;
 	server_last_received_us = 0;
 	memset(&final_metrics, 0, sizeof(final_metrics));
+	memset(&initial_metrics, 0, sizeof(initial_metrics));
 }
 
 static int network_server(const char *bind_address, uint16_t port,

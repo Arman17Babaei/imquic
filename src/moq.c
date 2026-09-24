@@ -192,7 +192,7 @@ void imquic_moq_new_connection(imquic_connection *conn, void *user_data) {
 	moq->is_server = conn->is_server;
 	moq->next_request_id = moq->is_server ? 1 : 0;
 	moq->expected_request_id = moq->is_server ? 0 : 1;
-	moq->local_max_request_updates = 1;		/* FIXME */
+	moq->local_max_request_updates = conn->socket->moq_max_request_updates > 0 ? conn->socket->moq_max_request_updates : 1;
 	const char *alpn = imquic_is_connection_webtransport(conn) ?
 		imquic_get_connection_wt_protocol(conn) : imquic_get_connection_alpn(conn);
 	moq->version = imquic_moq_version_from_alpn(alpn, conn->socket->moq_version);
@@ -1772,6 +1772,7 @@ imquic_moq_subscription *imquic_moq_subscription_create(uint64_t request_id, uin
 	imquic_moq_subscription *moq_sub = g_malloc0(sizeof(imquic_moq_subscription));
 	moq_sub->request_id = request_id;
 	moq_sub->track_alias = track_alias;
+	moq_sub->subscriber_priority = 128;
 	moq_sub->stream = NULL;
 	moq_sub->streams_by_subgroup = g_hash_table_new_full(g_int64_hash, g_int64_equal,
 		(GDestroyNotify)g_free, (GDestroyNotify)imquic_moq_stream_destroy);
@@ -4098,6 +4099,8 @@ size_t imquic_moq_parse_fetch(imquic_moq_context *moq, imquic_moq_stream *moq_st
 	/* Track this fetch subscription */
 	imquic_moq_subscription *moq_sub = imquic_moq_subscription_create(request_id, 0);
 	moq_sub->fetch = TRUE;
+	if(parameters.subscriber_priority_set)
+		moq_sub->subscriber_priority = parameters.subscriber_priority;
 	if(moq_stream != NULL)
 		moq_sub->ascending = moq_stream->ascending;
 	imquic_mutex_lock(&moq->mutex);
@@ -8279,6 +8282,37 @@ int imquic_moq_reject_fetch(imquic_connection *conn, uint64_t request_id,
 	return 0;
 }
 
+int imquic_moq_set_fetch_priority(imquic_connection *conn, uint64_t request_id, uint8_t priority) {
+	if(conn == NULL)
+		return -1;
+	imquic_mutex_lock(&moq_mutex);
+	imquic_moq_context *moq = g_hash_table_lookup(moq_sessions, conn);
+	if(moq == NULL) {
+		imquic_mutex_unlock(&moq_mutex);
+		return -1;
+	}
+	imquic_refcount_increase(&moq->ref);
+	imquic_mutex_unlock(&moq_mutex);
+	uint64_t stream_id = UINT64_MAX;
+	imquic_mutex_lock(&moq->mutex);
+	imquic_moq_subscription *moq_sub = g_hash_table_lookup(moq->subscriptions_by_id, &request_id);
+	if(moq_sub == NULL || !moq_sub->fetch) {
+		imquic_mutex_unlock(&moq->mutex);
+		imquic_refcount_decrease(&moq->ref);
+		return -1;
+	}
+	moq_sub->subscriber_priority = priority;
+	if(moq_sub->stream != NULL) {
+		moq_sub->stream->priority = priority;
+		stream_id = moq_sub->stream->stream_id;
+	}
+	imquic_mutex_unlock(&moq->mutex);
+	if(stream_id != UINT64_MAX)
+		imquic_connection_set_stream_priority(conn, stream_id, priority);
+	imquic_refcount_decrease(&moq->ref);
+	return 0;
+}
+
 int imquic_moq_cancel_fetch(imquic_connection *conn, uint64_t request_id) {
 	imquic_mutex_lock(&moq_mutex);
 	imquic_moq_context *moq = g_hash_table_lookup(moq_sessions, conn);
@@ -8688,9 +8722,10 @@ int imquic_moq_send_object(imquic_connection *conn, imquic_moq_object *object) {
 			/* Create a new stream */
 			moq_stream = imquic_moq_stream_create();
 			moq_stream->type = IMQUIC_MOQ_FETCH_HEADER;
-			moq_stream->priority = 128;	/* FIXME */
+			moq_stream->priority = moq_sub->subscriber_priority;
 			moq_stream->ascending = moq_sub->ascending;
 			imquic_connection_new_stream_id(conn, FALSE, &moq_stream->stream_id);
+			imquic_connection_set_stream_priority(conn, moq_stream->stream_id, moq_stream->priority);
 			moq_sub->stream = moq_stream;
 			moq_sub->streams_count++;
 			imquic_mutex_unlock(&moq->mutex);

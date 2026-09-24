@@ -205,6 +205,17 @@ int imquic_connection_send_on_stream(imquic_connection *conn, uint64_t stream_id
 	return 0;
 }
 
+int imquic_connection_set_stream_priority(imquic_connection *conn, uint64_t stream_id, uint8_t priority) {
+	if(conn == NULL)
+		return -1;
+	imquic_connection_event *event = imquic_connection_event_create(IMQUIC_CONNECTION_EVENT_STREAM_PRIORITY);
+	event->stream_id = stream_id;
+	event->priority = priority;
+	g_async_queue_push(conn->queued_events, event);
+	imquic_loop_wakeup();
+	return 0;
+}
+
 /* Helper to notify incoming DATAGRAM data to the application */
 void imquic_connection_notify_datagram_incoming(imquic_connection *conn, uint8_t *data, uint64_t length) {
 	if(conn == NULL || conn->socket == NULL || data == NULL || length == 0)

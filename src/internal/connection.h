@@ -106,6 +106,8 @@ void imquic_connection_destroy(imquic_connection *conn);
  * @param[out] stream_id Pointer to where the new stream ID will be placed
  * @returns 0 in case of success, a negative integer otherwise */
 int imquic_connection_new_stream_id(imquic_connection *conn, gboolean bidirectional, uint64_t *stream_id);
+/*! \brief Queue a stream-priority change on the connection loop. */
+int imquic_connection_set_stream_priority(imquic_connection *conn, uint64_t stream_id, uint8_t priority);
 /*! \brief Helper method to send data on a QUIC DATAGRAM
  * @note Datagrams support must have been negotiated on the connection.
  * Notice that this method will queue the data for delivery, but not send
@@ -171,6 +173,7 @@ typedef enum imquic_connection_event_type {
 	IMQUIC_CONNECTION_EVENT_DATAGRAM,
 	IMQUIC_CONNECTION_EVENT_RESET_STREAM,
 	IMQUIC_CONNECTION_EVENT_STOP_SENDING,
+	IMQUIC_CONNECTION_EVENT_STREAM_PRIORITY,
 	IMQUIC_CONNECTION_EVENT_CLOSE_CONN,
 } imquic_connection_event_type;
 
@@ -186,6 +189,8 @@ typedef struct imquic_connection_event {
 	gboolean fin;
 	/* Error code, where applicable */
 	uint64_t error_code;
+	/* Stream priority, where applicable */
+	uint8_t priority;
 	/* Reason string, where applicable */
 	char *reason;
 } imquic_connection_event;

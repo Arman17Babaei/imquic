@@ -168,6 +168,24 @@ int imquic_quic_create_context(imquic_network_endpoint *endpoint, imquic_configu
 		IMQUIC_LOG(IMQUIC_LOG_WARN, "[%s] Error configuring support for DATAGRAM: %d\n",
 			config->name, ret);
 	}
+	if(config->max_bidi_streams > 0) {
+		ret = picoquic_set_default_tp_value(endpoint->qc,
+			picoquic_tp_initial_max_streams_bidi, (uint64_t)config->max_bidi_streams);
+		if(ret != 0) {
+			IMQUIC_LOG(IMQUIC_LOG_ERR, "[%s] Error configuring bidirectional stream limit: %d\n",
+				config->name, ret);
+			return -1;
+		}
+	}
+	if(config->max_uni_streams > 0) {
+		ret = picoquic_set_default_tp_value(endpoint->qc,
+			picoquic_tp_initial_max_streams_uni, (uint64_t)config->max_uni_streams);
+		if(ret != 0) {
+			IMQUIC_LOG(IMQUIC_LOG_ERR, "[%s] Error configuring unidirectional stream limit: %d\n",
+				config->name, ret);
+			return -1;
+		}
+	}
 	/* FIXME Does picoquic verify the cert by default? */
 	if(config->cert_no_verify)
 		picoquic_set_null_verifier(endpoint->qc);
@@ -197,6 +215,8 @@ int imquic_get_transport_metrics(imquic_connection *conn,
 	metrics->congestion_window_bytes = quality.cwin;
 	metrics->bytes_in_flight = quality.bytes_in_transit;
 	uint64_t data_sent = picoquic_get_data_sent(conn->piconn);
+	metrics->data_sent_bytes = data_sent;
+	metrics->data_received_bytes = picoquic_get_data_received(conn->piconn);
 	imquic_mutex_lock(&conn->mutex);
 	metrics->queued_stream_bytes = conn->stream_bytes_queued > data_sent ?
 		conn->stream_bytes_queued - data_sent : 0;
@@ -263,6 +283,12 @@ gboolean imquic_quic_queued_event(imquic_connection *conn, imquic_connection_eve
 		if(ret != 0) {
 			IMQUIC_LOG(IMQUIC_LOG_WARN, "[%s] Error stopping STREAM %"SCNu64": %d\n",
 				conn->name, event->stream_id, ret);
+		}
+	} else if(event->type == IMQUIC_CONNECTION_EVENT_STREAM_PRIORITY) {
+		int ret = picoquic_set_stream_priority(conn->piconn, event->stream_id, event->priority);
+		if(ret != 0) {
+			IMQUIC_LOG(IMQUIC_LOG_WARN, "[%s] Error setting STREAM %"SCNu64" priority to %"SCNu8": %d\n",
+				conn->name, event->stream_id, event->priority, ret);
 		}
 	} else if(event->type == IMQUIC_CONNECTION_EVENT_CLOSE_CONN) {
 		/* Send a CONNECTION_CLOSE */

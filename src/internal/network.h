@@ -127,6 +127,8 @@ typedef struct imquic_network_endpoint {
 	uint32_t moq_version;
 	/*! \brief Whether GREASE should be sent in SETUP options */
 	gboolean moq_grease;
+	/*! \brief Locally advertised concurrent REQUEST_UPDATE limit */
+	uint64_t moq_max_request_updates;
 	/*! \brief Mutex */
 	imquic_mutex mutex;
 	/*! \brief Whether this connection has been started */
