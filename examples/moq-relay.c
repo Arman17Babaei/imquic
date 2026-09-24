@@ -14,6 +14,7 @@
 #include <imquic/moq.h>
 
 #include "moq-relay-options.h"
+#include "moq-relay-scheduler.h"
 #include "moq-utils.h"
 
 /* Command line options */
@@ -111,6 +112,11 @@ typedef struct imquic_demo_moq_subscription {
 	imquic_moq_location sub_start, sub_end;
 	uint64_t last_group_id, last_subgroup_id;
 	gboolean fetch;
+	gboolean cached_fetch;
+	gboolean fetch_ascending;
+	uint8_t subscriber_priority;
+	imquic_moq_location fetch_start, fetch_end;
+	GList *fetch_cursor;
 	gboolean forward;
 	imquic_moq_filters *filters;
 	GList *objects;
@@ -241,8 +247,10 @@ static void imquic_demo_moq_track_destroy(imquic_demo_moq_track *t) {
 				}
 				s->track = NULL;
 				if(s->fetch) {
-					g_list_free_full(s->objects, (GDestroyNotify)imquic_moq_object_cleanup);
+					if(!s->cached_fetch)
+						g_list_free_full(s->objects, (GDestroyNotify)imquic_moq_object_cleanup);
 					s->objects = NULL;
+					s->fetch_cursor = NULL;
 					fetches = g_list_remove(fetches, s);
 				}
 			}
@@ -296,6 +304,7 @@ static imquic_demo_moq_subscription *imquic_demo_moq_subscription_create(imquic_
 	s->request_id = request_id;
 	s->track_alias = track_alias;
 	s->forward = TRUE;
+	s->subscriber_priority = 128;
 	imquic_mutex_init(&s->mutex);
 	return s;
 }
@@ -308,7 +317,8 @@ static void imquic_demo_moq_subscription_destroy(imquic_demo_moq_subscription *s
 			imquic_mutex_unlock(&s->track->mutex);
 		}
 		if(s->fetch) {
-			g_list_free_full(s->objects, (GDestroyNotify)imquic_moq_object_cleanup);
+			if(!s->cached_fetch)
+				g_list_free_full(s->objects, (GDestroyNotify)imquic_moq_object_cleanup);
 			fetches = g_list_remove(fetches, s);
 		}
 		imquic_moq_filters_destroy(s->filters);
@@ -564,6 +574,21 @@ static int imquic_demo_reorder_descending(gconstpointer a, gconstpointer b) {
 			return 1;
 	}
 	return 0;
+}
+
+/* The track cache grows at the head. Existing nodes remain stable, so a
+ * standalone FETCH only owns a cursor: payloads and list nodes are not
+ * duplicated per request. */
+static imquic_moq_object *imquic_demo_fetch_peek(imquic_demo_moq_subscription *s) {
+	if(s == NULL || !s->cached_fetch)
+		return NULL;
+	return imquic_demo_fetch_cursor_peek(&s->fetch_cursor,
+		s->fetch_ascending, &s->fetch_start, &s->fetch_end);
+}
+
+static void imquic_demo_fetch_advance(imquic_demo_moq_subscription *s) {
+	if(s != NULL && s->fetch_cursor != NULL)
+		s->fetch_cursor = s->fetch_ascending ? s->fetch_cursor->prev : s->fetch_cursor->next;
 }
 
 /* Callbacks */
@@ -1345,6 +1370,14 @@ static void imquic_demo_request_updated(imquic_connection *conn, uint64_t reques
 	}
 	imquic_moq_request_parameters rparams;
 	imquic_moq_request_parameters_init_defaults(&rparams);
+	if(s->fetch && parameters->subscriber_priority_set) {
+		IMQUIC_LOG(IMQUIC_LOG_INFO, "[%s]  -- FETCH subscriber priority %u -> %u\n",
+			imquic_get_connection_name(conn), s->subscriber_priority, parameters->subscriber_priority);
+		s->subscriber_priority = parameters->subscriber_priority;
+		imquic_moq_set_fetch_priority(conn, sub_request_id, s->subscriber_priority);
+		rparams.subscriber_priority_set = TRUE;
+		rparams.subscriber_priority = s->subscriber_priority;
+	}
 	if(parameters->forward_set) {
 		/* TODO Update start location and end group too */
 		IMQUIC_LOG(IMQUIC_LOG_INFO, "[%s]  -- Object forwarding %s\n",
@@ -1614,30 +1647,24 @@ static void imquic_demo_incoming_standalone_fetch(imquic_connection *conn, uint6
 	g_hash_table_insert(sub->subscriptions_by_id, imquic_uint64_dup(request_id), s);
 	imquic_mutex_lock(&track->mutex);
 	track->subscriptions = g_list_append(track->subscriptions, s);
-	/* Prepare the list of objects to send, out of the provided range */
-	GList *temp = track->objects;
-	imquic_moq_object *object = (imquic_moq_object *)(temp ? temp->data : NULL);
+	/* Keep an O(1) cursor into the head-growing per-track object cache. Objects
+	 * are prepended as they arrive, so the head is descending and the tail ascending. */
+	imquic_moq_object *object = (imquic_moq_object *)track->objects->data;
 	imquic_moq_location largest = {
 		.group = (object ? object->group_id : 0),
 		.object = (object ? object->object_id : 0)
 	};
-	while(temp) {
-		object = (imquic_moq_object *)temp->data;
-		if((object->group_id < range->start.group || object->group_id > range->end.group) ||
-				(object->group_id == range->start.group && object->object_id < range->start.object) ||
-				(object->group_id == range->end.group && range->end.object > 0 && object->object_id > range->end.object)) {
-			/* Outside of the range */
-			temp = temp->next;
-			continue;
-		}
-		s->objects = g_list_prepend(s->objects, imquic_moq_object_duplicate(object));
-		temp = temp->next;
-	}
 	s->fetch = TRUE;
-	if(parameters->group_order == IMQUIC_MOQ_ORDERING_DESCENDING)
-		s->objects = g_list_sort(s->objects, imquic_demo_reorder_descending);
+	s->cached_fetch = TRUE;
+	s->fetch_ascending = parameters->group_order != IMQUIC_MOQ_ORDERING_DESCENDING;
+	s->subscriber_priority = parameters->subscriber_priority_set ? parameters->subscriber_priority : 128;
+	s->fetch_start = range->start;
+	s->fetch_end = range->end;
+	s->fetch_cursor = s->fetch_ascending ? g_list_last(track->objects) : track->objects;
+	imquic_demo_fetch_peek(s);
 	imquic_mutex_unlock(&track->mutex);
 	fetches = g_list_prepend(fetches, s);
+	imquic_moq_set_fetch_priority(conn, request_id, s->subscriber_priority);
 	/* Accept the fetch */
 	imquic_moq_request_parameters rparams;
 	imquic_moq_request_parameters_init_defaults(&rparams);
@@ -1987,6 +2014,9 @@ int main(int argc, char *argv[]) {
 		IMQUIC_CONFIG_QLOG_SEQUENTIAL, options.qlog_sequential,
 		IMQUIC_CONFIG_MOQ_VERSION, moq_version,
 		IMQUIC_CONFIG_MOQ_GREASE, options.test_grease,
+		IMQUIC_CONFIG_MAX_BIDI_STREAMS, 8192,
+		IMQUIC_CONFIG_MAX_UNI_STREAMS, 8192,
+		IMQUIC_CONFIG_MOQ_MAX_REQUEST_UPDATES, 4096,
 		IMQUIC_CONFIG_DONE, NULL);
 	if(server == NULL) {
 		ret = 1;
@@ -2053,30 +2083,70 @@ int main(int argc, char *argv[]) {
 			imquic_mutex_unlock(&mutex);
 			g_usleep(100000);
 		} else {
-			/* FIXME BADLY Iterate on the fetches and serve the requested objects */
-			GList *temp = fetches, *next = NULL;
+			/* Admit one object at a time. The tuple gives REQUEST_UPDATE an
+			 * immediate effect on the next unsent object while bounding the bytes
+			 * already queued in the transport. */
+			imquic_demo_moq_subscription *best = NULL;
+			imquic_moq_object *best_object = NULL;
+			GList *temp = fetches;
 			while(temp) {
+				GList *next = temp->next;
 				imquic_demo_moq_subscription *s = (imquic_demo_moq_subscription *)temp->data;
-				if(s && s->objects) {
-					GList *first = s->objects;
-					imquic_moq_object *object = (imquic_moq_object *)first->data;
-					object->request_id = s->request_id;
-					object->track_alias = s->track_alias;
-					object->delivery = IMQUIC_MOQ_USE_FETCH;
-					object->end_of_stream = (first->next == NULL);
-					imquic_moq_send_object(s->sub->conn, object);
-					imquic_moq_object_cleanup(object);
-					s->objects = g_list_delete_link(s->objects, first);
-				}
-				next = temp->next;
-				if(s->objects == NULL) {
-					IMQUIC_LOG(IMQUIC_LOG_INFO, "[%s] FETCH delivery %"SCNu64" completed\n",
-						imquic_get_connection_name(s->sub->conn), s->request_id);
+				imquic_moq_object *object = NULL;
+				if(s != NULL && s->cached_fetch)
+					object = imquic_demo_fetch_peek(s);
+				else if(s != NULL && s->objects != NULL)
+					object = (imquic_moq_object *)s->objects->data;
+				if(s != NULL && object == NULL) {
+					IMQUIC_LOG(IMQUIC_LOG_INFO, "[%s] FETCH delivery %"SCNu64" completed without an eligible object\n",
+						s->sub && s->sub->conn ? imquic_get_connection_name(s->sub->conn) : "??", s->request_id);
 					fetches = g_list_delete_link(fetches, temp);
 					if(s->sub)
 						g_hash_table_remove(s->sub->subscriptions_by_id, &s->request_id);
+					temp = next;
+					continue;
+				}
+				if(object != NULL && s->sub != NULL && s->sub->conn != NULL) {
+					imquic_transport_metrics transport = { 0 };
+					if(imquic_get_transport_metrics(s->sub->conn, &transport) == 0 &&
+							transport.queued_stream_bytes >= 65536) {
+						temp = temp->next;
+						continue;
+					}
+					if(best == NULL || imquic_demo_fetch_candidate_compare(
+							s->subscriber_priority, object, s->request_id,
+							best->subscriber_priority, best_object, best->request_id) < 0) {
+						best = s;
+						best_object = object;
+					}
 				}
 				temp = next;
+			}
+			if(best != NULL) {
+				imquic_moq_object outgoing = *best_object;
+				if(best->cached_fetch)
+					imquic_demo_fetch_advance(best);
+				else
+					best->objects = g_list_delete_link(best->objects, best->objects);
+				gboolean completed = best->cached_fetch ? imquic_demo_fetch_peek(best) == NULL : best->objects == NULL;
+				outgoing.request_id = best->request_id;
+				outgoing.track_alias = best->track_alias;
+				outgoing.delivery = IMQUIC_MOQ_USE_FETCH;
+				outgoing.end_of_stream = completed;
+				imquic_moq_send_object(best->sub->conn, &outgoing);
+				if(!best->cached_fetch)
+					imquic_moq_object_cleanup(best_object);
+				if(completed) {
+					IMQUIC_LOG(IMQUIC_LOG_INFO, "[%s] FETCH delivery %"SCNu64" completed\n",
+						imquic_get_connection_name(best->sub->conn), best->request_id);
+					fetches = g_list_remove(fetches, best);
+					if(best->sub)
+						g_hash_table_remove(best->sub->subscriptions_by_id, &best->request_id);
+				}
+			} else {
+				imquic_mutex_unlock(&mutex);
+				g_usleep(1000);
+				continue;
 			}
 			imquic_mutex_unlock(&mutex);
 		}

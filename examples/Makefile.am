@@ -39,11 +39,15 @@ endif
 if ENABLE_MOQ_EXAMPLES
 
 bin_PROGRAMS += imquic-moq-relay imquic-moq-pub imquic-moq-sub imquic-moq-interop-test
+check_PROGRAMS = imquic-moq-relay-scheduler-test
+TESTS = $(check_PROGRAMS)
 
 imquic_moq_relay_SOURCES = \
 	moq-relay.c \
 	moq-relay-options.c \
 	moq-relay-options.h \
+	moq-relay-scheduler.c \
+	moq-relay-scheduler.h \
 	moq-utils.c \
 	moq-utils.h
 imquic_moq_relay_CFLAGS = \
@@ -55,6 +59,19 @@ imquic_moq_relay_LDADD = \
 	$(IMQUIC_LIBS) \
 	$(IMQUIC_MANUAL_LIBS) \
 	-L../src/.libs -limquic \
+	$(NULL)
+
+imquic_moq_relay_scheduler_test_SOURCES = \
+	moq-relay-scheduler-test.c \
+	moq-relay-scheduler.c \
+	moq-relay-scheduler.h
+imquic_moq_relay_scheduler_test_CFLAGS = \
+	$(AM_CFLAGS) \
+	$(IMQUIC_CFLAGS) \
+	-I ../src \
+	$(NULL)
+imquic_moq_relay_scheduler_test_LDADD = \
+	$(IMQUIC_LIBS) \
 	$(NULL)
 
 imquic_moq_pub_SOURCES = \
