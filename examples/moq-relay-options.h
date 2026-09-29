@@ -22,6 +22,8 @@ typedef struct demo_options {
 	const char *pub_auth_info;
 	const char *ip;
 	int port;
+	char *congestion_control;
+	char *transport_metrics;
 	gboolean raw_quic;
 	gboolean webtransport;
 	const char *cert_pem;

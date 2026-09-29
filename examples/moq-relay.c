@@ -46,6 +46,7 @@ static GHashTable *connections = NULL, *publishers = NULL, *subscribers = NULL,
 	*namespaces = NULL, *namespaces_by_prefix = NULL;
 static GList *monitors = NULL;
 static GList *fetches = NULL;
+static guint64 admission_delay_us = 0;
 
 /* Helper structs */
 typedef struct imquic_demo_moq_publisher {
@@ -1907,6 +1908,10 @@ int main(int argc, char *argv[]) {
 
 	/* Initialize some command line options defaults */
 	options.debug_level = IMQUIC_LOG_INFO;
+	options.congestion_control = g_strdup("reno");
+	const char *admission_delay = g_getenv("IMQUIC_RELAY_ADMISSION_DELAY_US");
+	if(admission_delay != NULL)
+		admission_delay_us = g_ascii_strtoull(admission_delay, NULL, 10);
 	/* Let's call our cmdline parser */
 	if(!demo_options_parse(&options, argc, argv)) {
 		demo_options_show_usage();
@@ -1923,6 +1928,7 @@ int main(int argc, char *argv[]) {
 		imquic_set_refcount_debugging(TRUE);
 
 	int ret = 0;
+	FILE *transport_metrics = NULL;
 	if(options.cert_pem == NULL || strlen(options.cert_pem) == 0 || options.cert_key == NULL || strlen(options.cert_key) == 0) {
 		IMQUIC_LOG(IMQUIC_LOG_FATAL, "Missing certificate/key\n");
 		ret = 1;
@@ -1937,6 +1943,33 @@ int main(int argc, char *argv[]) {
 		IMQUIC_LOG(IMQUIC_LOG_FATAL, "No raw QUIC or WebTransport enabled (enable at least one)\n");
 		ret = 1;
 		goto done;
+	}
+	imquic_congestion_controller congestion_control;
+	imquic_ecn_mode ecn_mode;
+	if(!strcasecmp(options.congestion_control, "prague")) {
+		congestion_control = IMQUIC_CONGESTION_PRAGUE;
+		ecn_mode = IMQUIC_ECN_ECT1;
+	} else if(!strcasecmp(options.congestion_control, "reno")) {
+		congestion_control = IMQUIC_CONGESTION_RENO;
+		ecn_mode = IMQUIC_ECN_NOT_ECT;
+	} else {
+		IMQUIC_LOG(IMQUIC_LOG_FATAL, "Invalid congestion control '%s' (expected prague or reno)\n",
+			options.congestion_control);
+		ret = 1;
+		goto done;
+	}
+	IMQUIC_LOG(IMQUIC_LOG_INFO, "Congestion control: %s (%s)\n", options.congestion_control,
+		ecn_mode == IMQUIC_ECN_ECT1 ? "ECT(1)" : "Not-ECT");
+	if(options.transport_metrics != NULL) {
+		transport_metrics = fopen(options.transport_metrics, "w");
+		if(transport_metrics == NULL) {
+			IMQUIC_LOG(IMQUIC_LOG_FATAL, "Failed to open transport metrics path '%s'\n",
+				options.transport_metrics);
+			ret = 1;
+			goto done;
+		}
+		fputs("monotonic_us,connection,rtt_us,min_rtt_us,cwnd_bytes,bytes_in_flight,queued_stream_bytes,pacing_Bps,ect0_packets,ect1_packets,ce_packets,alpha_numerator,alpha_denominator,data_sent_bytes,data_received_bytes\n",
+			transport_metrics);
 	}
 	if(options.early_data)
 		IMQUIC_LOG(IMQUIC_LOG_INFO, "Early data support enabled\n");
@@ -2002,6 +2035,8 @@ int main(int argc, char *argv[]) {
 		IMQUIC_CONFIG_TLS_NO_VERIFY, TRUE,
 		IMQUIC_CONFIG_LOCAL_BIND, options.ip,
 		IMQUIC_CONFIG_LOCAL_PORT, options.port,
+		IMQUIC_CONFIG_CONGESTION_CONTROL, congestion_control,
+		IMQUIC_CONFIG_ECN, ecn_mode,
 		IMQUIC_CONFIG_RAW_QUIC, options.raw_quic,
 		IMQUIC_CONFIG_WEBTRANSPORT, options.webtransport,
 		IMQUIC_CONFIG_EARLY_DATA, options.early_data,
@@ -2075,9 +2110,36 @@ int main(int argc, char *argv[]) {
 
 	/* Start the server */
 	imquic_start_endpoint(server);
+	gint64 next_metrics_us = g_get_monotonic_time();
 
 	while(!stop) {
 		imquic_mutex_lock(&mutex);
+		gint64 now_us = g_get_monotonic_time();
+		if(transport_metrics != NULL && now_us >= next_metrics_us) {
+			GHashTableIter metrics_iter;
+			gpointer metrics_value;
+			g_hash_table_iter_init(&metrics_iter, subscribers);
+			while(g_hash_table_iter_next(&metrics_iter, NULL, &metrics_value)) {
+				imquic_demo_moq_subscriber *sub = metrics_value;
+				imquic_transport_metrics sample = { 0 };
+				if(sub != NULL && sub->conn != NULL && imquic_get_transport_metrics(sub->conn, &sample) == 0) {
+					fprintf(transport_metrics, "%"G_GINT64_FORMAT",%s,%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT
+						",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT
+						",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT",%u,%u,%"G_GUINT64_FORMAT
+						",%"G_GUINT64_FORMAT"\n", now_us, imquic_get_connection_name(sub->conn),
+						sample.smoothed_rtt_us, sample.min_rtt_us, sample.congestion_window_bytes,
+						sample.bytes_in_flight, sample.queued_stream_bytes,
+						sample.pacing_rate_bytes_per_second, sample.ect0_packets, sample.ect1_packets,
+						sample.ce_packets, sample.prague_alpha_numerator,
+						sample.prague_alpha_denominator, sample.data_sent_bytes,
+						sample.data_received_bytes);
+				}
+			}
+			fflush(transport_metrics);
+			next_metrics_us += 100000;
+			if(next_metrics_us <= now_us)
+				next_metrics_us = now_us + 100000;
+		}
 		if(fetches == NULL) {
 			/* Nothing to do, just wait */
 			imquic_mutex_unlock(&mutex);
@@ -2149,6 +2211,8 @@ int main(int argc, char *argv[]) {
 				continue;
 			}
 			imquic_mutex_unlock(&mutex);
+			if(best != NULL && admission_delay_us > 0)
+				g_usleep(admission_delay_us);
 		}
 	}
 
@@ -2156,6 +2220,8 @@ int main(int argc, char *argv[]) {
 	imquic_shutdown_endpoint(server);
 
 done:
+	if(transport_metrics != NULL)
+		fclose(transport_metrics);
 	imquic_deinit();
 	if(connections != NULL)
 		g_hash_table_unref(connections);
