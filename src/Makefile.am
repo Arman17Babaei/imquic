@@ -27,6 +27,7 @@ libimquic_la_SOURCES = \
 	internal/buffer.h \
 	loop.c \
 	internal/loop.h \
+	internal/timer.h \
 	network.c \
 	internal/network.h \
 	qlog.c \
@@ -69,7 +70,7 @@ libimquic_la_LIBADD = \
 
 BUILT_SOURCES = version.c
 
-check_PROGRAMS = imquic-l4s-test imquic-moq-priority-test
+check_PROGRAMS = imquic-l4s-test imquic-moq-priority-test imquic-loop-timer-test
 noinst_PROGRAMS = imquic-sustained-moq
 TESTS = $(check_PROGRAMS)
 
@@ -118,3 +119,7 @@ CLEANFILES += version.c
 
 .PHONY: FORCE
 FORCE:
+
+imquic_loop_timer_test_SOURCES = loop-timer-test.c internal/timer.h
+imquic_loop_timer_test_CFLAGS = $(AM_CFLAGS) $(IMQUIC_CFLAGS)
+imquic_loop_timer_test_LDADD = $(IMQUIC_LIBS)

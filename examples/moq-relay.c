@@ -47,6 +47,15 @@ static GHashTable *connections = NULL, *publishers = NULL, *subscribers = NULL,
 static GList *monitors = NULL;
 static GList *fetches = NULL;
 static guint64 admission_delay_us = 0;
+static guint64 admission_queue_bytes = 65536;
+
+static gboolean imquic_demo_fetch_connection_admissible(gpointer connection,
+		gpointer user_data) {
+	(void)user_data;
+	imquic_transport_metrics transport = { 0 };
+	return imquic_get_transport_metrics(connection, &transport) != 0 ||
+		transport.queued_stream_bytes < admission_queue_bytes;
+}
 
 /* Helper structs */
 typedef struct imquic_demo_moq_publisher {
@@ -1912,6 +1921,16 @@ int main(int argc, char *argv[]) {
 	const char *admission_delay = g_getenv("IMQUIC_RELAY_ADMISSION_DELAY_US");
 	if(admission_delay != NULL)
 		admission_delay_us = g_ascii_strtoull(admission_delay, NULL, 10);
+	const char *admission_queue = g_getenv("IMQUIC_RELAY_ADMISSION_QUEUE_BYTES");
+	if(admission_queue != NULL) {
+		gchar *end = NULL;
+		guint64 value = g_ascii_strtoull(admission_queue, &end, 10);
+		if(end == admission_queue || *end != '\0' || value < 65536 || value > 2097152) {
+			IMQUIC_PRINT("Invalid IMQUIC_RELAY_ADMISSION_QUEUE_BYTES (65536..2097152 required)\n");
+			return 1;
+		}
+		admission_queue_bytes = value;
+	}
 	/* Let's call our cmdline parser */
 	if(!demo_options_parse(&options, argc, argv)) {
 		demo_options_show_usage();
@@ -1968,7 +1987,7 @@ int main(int argc, char *argv[]) {
 			ret = 1;
 			goto done;
 		}
-		fputs("monotonic_us,connection,rtt_us,min_rtt_us,cwnd_bytes,bytes_in_flight,queued_stream_bytes,pacing_Bps,ect0_packets,ect1_packets,ce_packets,alpha_numerator,alpha_denominator,data_sent_bytes,data_received_bytes\n",
+		fputs("monotonic_us,connection,rtt_us,min_rtt_us,cwnd_bytes,bytes_in_flight,queued_stream_bytes,pacing_Bps,ect0_packets,ect1_packets,ce_packets,alpha_numerator,alpha_denominator,data_sent_bytes,data_received_bytes,prague_pacing_interval_us,pacing_quantum_bytes,send_state_time_us,output_streams,ready_streams,flow_blocked_streams,picoquic_queued_bytes,sendable_bytes,connection_credit_bytes,packets_sent,packets_lost,spurious_losses,timer_losses,max_reorder_delay_us,max_reorder_gap\n",
 			transport_metrics);
 	}
 	if(options.early_data)
@@ -2036,6 +2055,7 @@ int main(int argc, char *argv[]) {
 		IMQUIC_CONFIG_LOCAL_BIND, options.ip,
 		IMQUIC_CONFIG_LOCAL_PORT, options.port,
 		IMQUIC_CONFIG_CONGESTION_CONTROL, congestion_control,
+		IMQUIC_CONFIG_CONGESTION_OPTIONS, g_getenv("IMQUIC_RELAY_CONGESTION_OPTIONS"),
 		IMQUIC_CONFIG_ECN, ecn_mode,
 		IMQUIC_CONFIG_RAW_QUIC, options.raw_quic,
 		IMQUIC_CONFIG_WEBTRANSPORT, options.webtransport,
@@ -2111,6 +2131,7 @@ int main(int argc, char *argv[]) {
 	/* Start the server */
 	imquic_start_endpoint(server);
 	gint64 next_metrics_us = g_get_monotonic_time();
+	GHashTable *admission_cache = g_hash_table_new(g_direct_hash, g_direct_equal);
 
 	while(!stop) {
 		imquic_mutex_lock(&mutex);
@@ -2126,13 +2147,23 @@ int main(int argc, char *argv[]) {
 					fprintf(transport_metrics, "%"G_GINT64_FORMAT",%s,%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT
 						",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT
 						",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT",%u,%u,%"G_GUINT64_FORMAT
-						",%"G_GUINT64_FORMAT"\n", now_us, imquic_get_connection_name(sub->conn),
+						",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT
+						",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT
+						",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT, now_us, imquic_get_connection_name(sub->conn),
 						sample.smoothed_rtt_us, sample.min_rtt_us, sample.congestion_window_bytes,
 						sample.bytes_in_flight, sample.queued_stream_bytes,
 						sample.pacing_rate_bytes_per_second, sample.ect0_packets, sample.ect1_packets,
 						sample.ce_packets, sample.prague_alpha_numerator,
 						sample.prague_alpha_denominator, sample.data_sent_bytes,
-						sample.data_received_bytes);
+						sample.data_received_bytes, sample.prague_pacing_interval_us, sample.pacing_quantum_bytes,
+						sample.send_state_time_us, sample.output_streams, sample.ready_streams,
+						sample.flow_blocked_streams, sample.picoquic_queued_bytes,
+						sample.sendable_bytes, sample.connection_credit_bytes);
+					fprintf(transport_metrics, ",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT
+						",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT",%"G_GUINT64_FORMAT
+						",%"G_GUINT64_FORMAT"\n", sample.packets_sent, sample.packets_lost,
+						sample.spurious_losses, sample.timer_losses,
+						sample.max_reorder_delay_us, sample.max_reorder_gap);
 				}
 			}
 			fflush(transport_metrics);
@@ -2150,6 +2181,7 @@ int main(int argc, char *argv[]) {
 			 * already queued in the transport. */
 			imquic_demo_moq_subscription *best = NULL;
 			imquic_moq_object *best_object = NULL;
+			g_hash_table_remove_all(admission_cache);
 			GList *temp = fetches;
 			while(temp) {
 				GList *next = temp->next;
@@ -2169,9 +2201,8 @@ int main(int argc, char *argv[]) {
 					continue;
 				}
 				if(object != NULL && s->sub != NULL && s->sub->conn != NULL) {
-					imquic_transport_metrics transport = { 0 };
-					if(imquic_get_transport_metrics(s->sub->conn, &transport) == 0 &&
-							transport.queued_stream_bytes >= 65536) {
+					if(!imquic_demo_fetch_admission_cached(admission_cache,
+							s->sub->conn, imquic_demo_fetch_connection_admissible, NULL)) {
 						temp = temp->next;
 						continue;
 					}
@@ -2217,6 +2248,7 @@ int main(int argc, char *argv[]) {
 	}
 
 
+	g_hash_table_unref(admission_cache);
 	imquic_shutdown_endpoint(server);
 
 done:

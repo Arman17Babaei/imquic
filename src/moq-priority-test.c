@@ -1,5 +1,8 @@
 #include "imquic/imquic.h"
 #include "imquic/moq.h"
+#include "internal/moq.h"
+#include "internal/connection.h"
+#include "internal/network.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -241,6 +244,59 @@ static void incoming_object(imquic_connection *conn, imquic_moq_object *object) 
 	maybe_complete();
 }
 
+static int buffered_objects, buffered_terminals;
+static void buffered_object(imquic_connection *conn, imquic_moq_object *object) {
+	(void)conn;
+	if(object->object_id != (uint64_t)buffered_objects || object->payload_len != 1 || object->payload[0] != 42)
+		buffered_objects = -100;
+	buffered_objects++;
+	if(object->end_of_stream) buffered_terminals++;
+}
+
+/* A final QUIC read can coalesce more than one complete MoQ object. */
+static int test_coalesced_fin(void) {
+	imquic_network_endpoint endpoint = { 0 };
+	endpoint.callbacks.moq.incoming_object = buffered_object;
+	imquic_connection connection = { .name = "coalesced-fin", .socket = &endpoint };
+	imquic_moq_context moq = { .conn = &connection, .version = IMQUIC_MOQ_VERSION_19 };
+	for(int fetch = 0; fetch < 2; fetch++) {
+		uint8_t bytes[256], payload = 42, error = 0;
+		size_t used = 0;
+		imquic_moq_stream *stream = imquic_moq_stream_create();
+		stream->type = fetch ? IMQUIC_MOQ_FETCH_HEADER : IMQUIC_MOQ_SUBGROUP_HEADER;
+		stream->ascending = TRUE;
+		for(int index = 0; index < 2; index++) {
+			size_t encoded;
+			if(fetch) {
+				uint64_t flags = imquic_moq_generate_fetch_serialization_flags(moq.version,
+					IMQUIC_MOQ_FETCH_SUBGROUP_ID, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE);
+				encoded = imquic_moq_add_fetch_header_object(&moq, bytes + used, sizeof(bytes) - used,
+					flags, 0, 0, index, 64, IMQUIC_MOQ_NORMAL_OBJECT, NULL, 0, &payload, 1, NULL, 0);
+			} else {
+				stream->got_objects = index > 0; stream->last_object_id = 0;
+				encoded = imquic_moq_add_subgroup_header_object(&moq, stream, bytes + used, sizeof(bytes) - used,
+					0, IMQUIC_MOQ_NORMAL_OBJECT, NULL, 0, &payload, 1, NULL, 0);
+			}
+			if(!encoded) return -1;
+			used += encoded;
+		}
+		stream->got_objects = FALSE;
+		stream->buffer = imquic_buffer_create(bytes, used);
+		buffered_objects = 0; buffered_terminals = 0;
+		for(int index = 0; index < 2; index++) {
+			int parsed = fetch ? imquic_moq_parse_fetch_header_object(&moq, stream, TRUE, &error) :
+				imquic_moq_parse_subgroup_header_object(&moq, stream, TRUE, &error);
+			if(parsed != 0 || buffered_objects != index + 1 || buffered_terminals != index || stream->closed != (index == 1)) {
+				fprintf(stderr, "coalesced FIN regression: fetch=%d index=%d parsed=%d objects=%d terminals=%d closed=%d\n",
+					fetch, index, parsed, buffered_objects, buffered_terminals, stream->closed);
+				return -1;
+			}
+		}
+		imquic_moq_stream_destroy(stream);
+	}
+	return 0;
+}
+
 int main(void) {
 	imquic_server *server = NULL;
 	imquic_client *client = NULL;
@@ -248,6 +304,7 @@ int main(void) {
 	if(imquic_init(NULL) != 0)
 		return 1;
 	imquic_set_log_level(IMQUIC_LOG_WARN);
+	if(test_coalesced_fin() != 0) goto done;
 	server = imquic_create_moq_server("moq-priority-server",
 		IMQUIC_CONFIG_INIT,
 		IMQUIC_CONFIG_LOCAL_BIND, "127.0.0.1",

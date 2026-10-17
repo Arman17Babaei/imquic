@@ -213,10 +213,27 @@ typedef struct imquic_transport_metrics {
 	uint64_t ce_packets;
 	uint32_t prague_alpha_numerator;
 	uint32_t prague_alpha_denominator;
+	uint64_t prague_pacing_interval_us;
+	uint64_t pacing_quantum_bytes;
 	/*! Cumulative bytes reported sent by picoquic for this connection */
 	uint64_t data_sent_bytes;
 	/*! Cumulative bytes reported received by picoquic for this connection */
 	uint64_t data_received_bytes;
+	/*! Data-send snapshot captured on the QUIC event thread; monotonic timestamp */
+	uint64_t send_state_time_us;
+	uint64_t output_streams;
+	uint64_t ready_streams;
+	uint64_t flow_blocked_streams;
+	uint64_t picoquic_queued_bytes;
+	uint64_t sendable_bytes;
+	uint64_t connection_credit_bytes;
+	/*! Packet loss counters include losses subsequently reported spurious. */
+	uint64_t packets_sent;
+	uint64_t packets_lost;
+	uint64_t spurious_losses;
+	uint64_t timer_losses;
+	uint64_t max_reorder_delay_us;
+	uint64_t max_reorder_gap;
 } imquic_transport_metrics;
 
 int imquic_get_transport_metrics(imquic_connection *conn,

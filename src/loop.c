@@ -22,6 +22,7 @@
 #include <arpa/inet.h>
 
 #include "internal/loop.h"
+#include "internal/timer.h"
 #include "internal/network.h"
 #include "internal/quic.h"
 #include "internal/connection.h"
@@ -201,4 +202,9 @@ imquic_source *imquic_loop_add_timer(guint ms, GSourceFunc func, gpointer data) 
 	g_source_attach((GSource *)timer, ctx);
 	g_source_unref((GSource *)timer);
 	return timer;
+}
+
+/* Preserve picoquic's microsecond pacing deadlines. */
+gboolean imquic_loop_schedule_timer_us(imquic_wake_timer *timer, guint64 us, GSourceFunc func, gpointer data, GDestroyNotify destroy) {
+	return imquic_wake_timer_schedule(timer, ctx, us, func, data, destroy);
 }

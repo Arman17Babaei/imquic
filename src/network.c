@@ -119,6 +119,7 @@ static int imquic_get_fd_port(int fd) {
 /* Endpoint manipulation */
 static void imquic_network_endpoint_free(const imquic_refcount *ne_ref) {
 	imquic_network_endpoint *ne = imquic_refcount_containerof(ne_ref, imquic_network_endpoint, ref);
+	imquic_wake_timer_cancel(&ne->timer);
 	g_free(ne->name);
 	g_free(ne->sni);
 	g_strfreev(ne->alpn);
@@ -190,6 +191,10 @@ void imquic_network_endpoint_remove_connection(imquic_network_endpoint *ne, imqu
 void imquic_network_endpoint_shutdown(imquic_network_endpoint *ne) {
 	if(ne == NULL || ne->source == NULL)
 		return;
+	imquic_mutex_lock(&ne->mutex);
+	g_atomic_int_set(&ne->stopping, 1);
+	imquic_wake_timer_cancel(&ne->timer);
+	imquic_mutex_unlock(&ne->mutex);
 	g_source_destroy((GSource *)ne->source);
 	g_source_unref((GSource *)ne->source);
 }
@@ -224,6 +229,34 @@ imquic_network_endpoint *imquic_network_endpoint_create(imquic_configuration *co
 		IMQUIC_LOG(IMQUIC_LOG_ERR, "[%s] Stream and REQUEST_UPDATE limits cannot be negative\n",
 			config->name ? config->name : "??");
 		return NULL;
+	}
+	/* Opt-in bounded receive buffering for paced high-bandwidth paths. Linux
+	 * may clamp this to rmem_max, so always report the actual socket value. */
+	int receive_buffer_bytes = 0;
+	const char *receive_buffer = g_getenv("IMQUIC_UDP_RECEIVE_BUFFER_BYTES");
+	if(receive_buffer != NULL) {
+		char *end = NULL;
+		errno = 0;
+		guint64 requested = g_ascii_strtoull(receive_buffer, &end, 10);
+		if(errno != 0 || receive_buffer[0] < '0' || receive_buffer[0] > '9' ||
+				end == receive_buffer || *end != '\0' || requested < 4096 || requested > 8 * 1024 * 1024) {
+			IMQUIC_LOG(IMQUIC_LOG_ERR, "Invalid IMQUIC_UDP_RECEIVE_BUFFER_BYTES (expected 4096..8388608)\n");
+			return NULL;
+		}
+		receive_buffer_bytes = (int)requested;
+	}
+	int send_buffer_bytes = 0;
+	const char *send_buffer = g_getenv("IMQUIC_UDP_SEND_BUFFER_BYTES");
+	if(send_buffer != NULL) {
+		char *end = NULL;
+		errno = 0;
+		guint64 requested = g_ascii_strtoull(send_buffer, &end, 10);
+		if(errno != 0 || send_buffer[0] < '0' || send_buffer[0] > '9' ||
+				end == send_buffer || *end != '\0' || requested < 4096 || requested > 8 * 1024 * 1024) {
+			IMQUIC_LOG(IMQUIC_LOG_ERR, "Invalid IMQUIC_UDP_SEND_BUFFER_BYTES (expected 4096..8388608)\n");
+			return NULL;
+		}
+		send_buffer_bytes = (int)requested;
 	}
 	if(!config->raw_quic && !config->webtransport)
 		config->raw_quic = TRUE;
@@ -387,6 +420,36 @@ imquic_network_endpoint *imquic_network_endpoint_create(imquic_configuration *co
 			config->name, errno, g_strerror(errno));
 		return NULL;
 	}
+	if(receive_buffer_bytes > 0) {
+		if(setsockopt(quic_fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer_bytes, sizeof(receive_buffer_bytes)) != 0) {
+			IMQUIC_LOG(IMQUIC_LOG_ERR, "[%s] Error setting UDP receive buffer: %s\n", config->name, g_strerror(errno));
+			close(quic_fd);
+			return NULL;
+		}
+		int actual = 0;
+		socklen_t actual_len = sizeof(actual);
+		if(getsockopt(quic_fd, SOL_SOCKET, SO_RCVBUF, &actual, &actual_len) == 0) {
+			IMQUIC_LOG(IMQUIC_LOG_INFO, "[%s] UDP receive buffer requested=%d actual=%d bytes\n",
+				config->name, receive_buffer_bytes, actual);
+			if(actual < receive_buffer_bytes)
+				IMQUIC_LOG(IMQUIC_LOG_WARN, "[%s] UDP receive buffer capped by kernel rmem_max\n", config->name);
+		}
+	}
+	if(send_buffer_bytes > 0) {
+		if(setsockopt(quic_fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_bytes, sizeof(send_buffer_bytes)) != 0) {
+			IMQUIC_LOG(IMQUIC_LOG_ERR, "[%s] Error setting UDP send buffer: %s\n", config->name, g_strerror(errno));
+			close(quic_fd);
+			return NULL;
+		}
+		int actual = 0;
+		socklen_t actual_len = sizeof(actual);
+		if(getsockopt(quic_fd, SOL_SOCKET, SO_SNDBUF, &actual, &actual_len) == 0) {
+			IMQUIC_LOG(IMQUIC_LOG_INFO, "[%s] UDP send buffer requested=%d actual=%d bytes\n",
+				config->name, send_buffer_bytes, actual);
+			if(actual < send_buffer_bytes)
+				IMQUIC_LOG(IMQUIC_LOG_WARN, "[%s] UDP send buffer capped by kernel wmem_max\n", config->name);
+		}
+	}
 	int ecn = 0;
 	if(config->ecn_mode == IMQUIC_ECN_DEFAULT) {
 		ecn = config->congestion_controller == IMQUIC_CONGESTION_PRAGUE ? 1 : 0;
@@ -530,6 +593,11 @@ imquic_network_endpoint *imquic_network_endpoint_create(imquic_configuration *co
 
 /* Callback fired when we have packets to send on a connection */
 int imquic_network_send_packet(imquic_network_endpoint *ne) {
+	imquic_mutex_lock(&ne->mutex);
+	imquic_wake_timer_dispatched(&ne->timer);
+	gboolean stopping = g_atomic_int_get(&ne->stopping) || g_atomic_int_get(&ne->destroyed);
+	imquic_mutex_unlock(&ne->mutex);
+	if(stopping) return G_SOURCE_REMOVE;
 	IMQUIC_LOG(IMQUIC_LOG_DBG, "[%s] Callback fired\n", ne->name);
 	uint8_t buffer[4096];
 	size_t blen = 0;
@@ -543,6 +611,25 @@ int imquic_network_send_packet(imquic_network_endpoint *ne) {
 		} else {
 			IMQUIC_LOG(IMQUIC_LOG_VERB, "  -- Sent %d/%zu bytes\n", sent, blen);
 		}
+	}
+	/* Inspect send queues only here, on the thread that owns picoquic. Cache a
+	 * bounded-rate snapshot for metrics readers on other threads. */
+	uint64_t now_us = (uint64_t)g_get_monotonic_time();
+	if(now_us >= ne->next_send_state_us) {
+		imquic_mutex_lock(&ne->mutex);
+		for(picoquic_cnx_t *cnx = picoquic_get_first_cnx(ne->qc); cnx != NULL;
+				cnx = picoquic_get_next_cnx(cnx)) {
+			imquic_connection *conn = g_hash_table_lookup(ne->connections_by_cnx, cnx);
+			picoquic_stream_send_state_t state = { 0 };
+			if(conn != NULL && picoquic_get_stream_send_state(cnx, &state) == 0) {
+				imquic_mutex_lock(&conn->mutex);
+				conn->send_state = state;
+				conn->send_state_time_us = now_us;
+				imquic_mutex_unlock(&conn->mutex);
+			}
+		}
+		imquic_mutex_unlock(&ne->mutex);
+		ne->next_send_state_us = now_us + 50000;
 	}
 	imquic_quic_next_step(ne);
 	return G_SOURCE_REMOVE;

@@ -67,3 +67,5 @@ results/l4s/
 .vscode
 
 picoquic
+
+imquic-loop-timer-test

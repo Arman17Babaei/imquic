@@ -60,6 +60,8 @@ struct imquic_connection {
 	/*! \brief Queue of events in the loop and outgoing packets to send */
 	GAsyncQueue *queued_events;
 	uint64_t stream_bytes_queued;
+	picoquic_stream_send_state_t send_state;
+	uint64_t send_state_time_us;
 	/*! \brief Whether an ALPN has been negotiated */
 	gboolean alpn_negotiated;
 	/*! \brief Whether this connection has been established */

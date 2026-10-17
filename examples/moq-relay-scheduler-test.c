@@ -77,8 +77,48 @@ static int priority_test(void) {
 	return 0;
 }
 
+typedef struct admission_fixture {
+	guint calls;
+	gboolean admitted;
+} admission_fixture;
+
+static gboolean admission_read(gpointer connection, gpointer user_data) {
+	(void)user_data;
+	admission_fixture *fixture = connection;
+	fixture->calls++;
+	return fixture->admitted;
+}
+
+static int admission_test(void) {
+	GHashTable *cache = g_hash_table_new(g_direct_hash, g_direct_equal);
+	admission_fixture available = { .admitted = TRUE };
+	admission_fixture blocked = { .admitted = FALSE };
+	/* Interleaved FETCHes must neither reread the same connection nor share
+	 * admission between different connections. */
+	for(guint i = 0; i < 1484; i++) {
+		g_assert_true(imquic_demo_fetch_admission_cached(cache, &available,
+			admission_read, NULL));
+		g_assert_false(imquic_demo_fetch_admission_cached(cache, &blocked,
+			admission_read, NULL));
+	}
+	g_assert_cmpuint(available.calls, ==, 1);
+	g_assert_cmpuint(blocked.calls, ==, 1);
+	/* A new scan must observe both a drained and a newly full connection. */
+	g_hash_table_remove_all(cache);
+	available.admitted = FALSE;
+	blocked.admitted = TRUE;
+	g_assert_false(imquic_demo_fetch_admission_cached(cache, &available,
+		admission_read, NULL));
+	g_assert_true(imquic_demo_fetch_admission_cached(cache, &blocked,
+		admission_read, NULL));
+	g_assert_cmpuint(available.calls, ==, 2);
+	g_assert_cmpuint(blocked.calls, ==, 2);
+	g_hash_table_unref(cache);
+	return 0;
+}
+
 int main(void) {
-	if(cursor_test() != 0 || priority_test() != 0) {
+	if(cursor_test() != 0 || priority_test() != 0 || admission_test() != 0) {
 		fprintf(stderr, "MoQ relay scheduler test failed\n");
 		return 1;
 	}

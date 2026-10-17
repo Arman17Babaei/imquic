@@ -54,6 +54,9 @@ imquic_source *imquic_loop_poll_connection(void *c);
  * @param data Optional user data to pass to the callback function, for correlation purposes
  * @returns A pointer to the imquic_source, if successful, or NULL otherwise */
 imquic_source *imquic_loop_add_timer(guint ms, GSourceFunc func, gpointer data);
+/*! \brief Add a one-shot timer preserving a microsecond QUIC wake delay. */
+struct imquic_wake_timer;
+gboolean imquic_loop_schedule_timer_us(struct imquic_wake_timer *timer, guint64 us, GSourceFunc func, gpointer data, GDestroyNotify destroy);
 ///@}
 
 #endif

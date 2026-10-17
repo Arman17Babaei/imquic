@@ -126,8 +126,36 @@ static void client_connection_failed(void *user_data)
 	fail_test("Prague loopback connection failed");
 }
 
+static int invalid_receive_buffer_test(const char *setting)
+{
+	const char *invalid[] = { "", "-1", "1024", "8388609", "1048576x" };
+	char *saved = g_strdup(g_getenv(setting));
+	int ret = 0;
+	for(size_t i = 0; i < G_N_ELEMENTS(invalid); i++) {
+		g_setenv(setting, invalid[i], TRUE);
+		imquic_server *server = imquic_create_server("invalid-receive-buffer",
+			IMQUIC_CONFIG_INIT,
+			IMQUIC_CONFIG_LOCAL_PORT, 0,
+			IMQUIC_CONFIG_TLS_CERT, TEST_CERT_PATH,
+			IMQUIC_CONFIG_TLS_KEY, TEST_KEY_PATH,
+			IMQUIC_CONFIG_ALPN, "imquic-l4s-test",
+			IMQUIC_CONFIG_DONE, NULL);
+		if(server != NULL) {
+			imquic_shutdown_endpoint(server);
+			ret = -1;
+		}
+	}
+	if(saved != NULL) g_setenv(setting, saved, TRUE);
+	else g_unsetenv(setting);
+	g_free(saved);
+	return ret;
+}
+
 static int invalid_options_test(void)
 {
+	if(invalid_receive_buffer_test("IMQUIC_UDP_SEND_BUFFER_BYTES") != 0 ||
+		invalid_receive_buffer_test("IMQUIC_UDP_RECEIVE_BUFFER_BYTES") != 0 ||
+		invalid_receive_buffer_test("IMQUIC_STREAM_RECEIVE_WINDOW_BYTES") != 0) return -1;
 	imquic_server *server = imquic_create_server("invalid-prague",
 		IMQUIC_CONFIG_INIT,
 		IMQUIC_CONFIG_LOCAL_PORT, 0,
@@ -278,6 +306,11 @@ static int loopback_traffic_test(void)
 	} else if(final_metrics.data_sent_bytes <= initial_metrics.data_sent_bytes ||
 			final_metrics.data_received_bytes <= initial_metrics.data_received_bytes) {
 		fprintf(stderr, "transport byte counters did not increase during loopback traffic\n");
+		ret = -1;
+	} else if(final_metrics.packets_sent <= initial_metrics.packets_sent ||
+			final_metrics.spurious_losses > final_metrics.packets_lost ||
+			final_metrics.packets_lost > final_metrics.packets_sent) {
+		fprintf(stderr, "transport packet/loss counters are inconsistent after loopback traffic\n");
 		ret = -1;
 	} else {
 		printf("IMQUIC Prague traffic: sent=%u, echoed=%" G_GUINT64_FORMAT

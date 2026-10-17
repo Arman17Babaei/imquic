@@ -22,6 +22,7 @@
 #include "../imquic/imquic.h"
 #include "configuration.h"
 #include "loop.h"
+#include "timer.h"
 #include "moq.h"
 #include "roq.h"
 
@@ -71,8 +72,10 @@ typedef struct imquic_network_endpoint {
 	imquic_congestion_controller congestion_controller;
 	/*! Owned controller option string */
 	char *congestion_options;
+	uint64_t next_send_state_us;
 	/* Picoquic timer */
-	struct imquic_source *timer;
+	imquic_wake_timer timer;
+	gint stopping;
 	/*! \brief SNI the client will use */
 	char *sni;
 	/*! \brief Whether raw QUIC should be supported */

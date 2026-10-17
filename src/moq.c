@@ -4668,7 +4668,9 @@ int imquic_moq_parse_subgroup_header_object(imquic_moq_context *moq, imquic_moq_
 		.payload_len = p_len,
 		.properties = properties,
 		.delivery = IMQUIC_MOQ_USE_SUBGROUP,
-		.end_of_stream = complete
+		/* A FIN-bearing read may contain multiple objects. Only the last
+		 * complete object in that buffer terminates the stream. */
+		.end_of_stream = complete && offset + p_len == blen
 	};
 	if(moq_stream != NULL && moq->conn->qlog != NULL && moq->conn->qlog->moq)
 		imquic_moq_qlog_subgroup_object_parsed(moq->conn->qlog, moq_stream->stream_id, &object);
@@ -4678,7 +4680,7 @@ int imquic_moq_parse_subgroup_header_object(imquic_moq_context *moq, imquic_moq_
 	/* Move on */
 	offset += p_len;
 	imquic_buffer_shift(moq_stream->buffer, offset);
-	if(complete)
+	if(object.end_of_stream)
 		moq_stream->closed = TRUE;
 	/* Done */
 	return 0;
@@ -4865,7 +4867,7 @@ int imquic_moq_parse_fetch_header_object(imquic_moq_context *moq, imquic_moq_str
 		.payload_len = p_len,
 		.properties = properties,
 		.delivery = IMQUIC_MOQ_USE_FETCH,
-		.end_of_stream = complete
+		.end_of_stream = complete && offset + p_len == blen
 	};
 	if(moq_stream != NULL && moq->conn->qlog != NULL && moq->conn->qlog->moq)
 		imquic_moq_qlog_fetch_object_parsed(moq->conn->qlog, moq_stream->stream_id, &object);
@@ -4875,7 +4877,7 @@ int imquic_moq_parse_fetch_header_object(imquic_moq_context *moq, imquic_moq_str
 	/* Move on */
 	offset += p_len;
 	imquic_buffer_shift(moq_stream->buffer, offset);
-	if(complete)
+	if(object.end_of_stream)
 		moq_stream->closed = TRUE;
 	/* Done */
 	return 0;

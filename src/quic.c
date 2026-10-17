@@ -13,6 +13,7 @@
 #include <picoquic_prague.h>
 #include <autoqlog.h>
 #include <string.h>
+#include <errno.h>
 
 #include "internal/quic.h"
 #include "internal/qlog.h"
@@ -186,6 +187,34 @@ int imquic_quic_create_context(imquic_network_endpoint *endpoint, imquic_configu
 			return -1;
 		}
 	}
+	/* Each FETCH starts a new unidirectional stream. Allow a bounded opt-in
+	 * receive window large enough for the path BDP instead of restarting at
+	 * picoquic's 65535-byte credit on every track. */
+	const char *window = g_getenv("IMQUIC_STREAM_RECEIVE_WINDOW_BYTES");
+	if(window != NULL) {
+		char *end = NULL;
+		errno = 0;
+		guint64 bytes = g_ascii_strtoull(window, &end, 10);
+		if(errno != 0 || window[0] < '0' || window[0] > '9' ||
+				end == window || *end != '\0' || bytes < 4096 || bytes > 8 * 1024 * 1024) {
+			IMQUIC_LOG(IMQUIC_LOG_ERR, "Invalid IMQUIC_STREAM_RECEIVE_WINDOW_BYTES (expected 4096..8388608)\n");
+			return -1;
+		}
+		const uint64_t parameters[] = { picoquic_tp_initial_max_stream_data_uni,
+			picoquic_tp_initial_max_stream_data_bidi_local, picoquic_tp_initial_max_stream_data_bidi_remote };
+		for(size_t i = 0; i < G_N_ELEMENTS(parameters); i++) {
+			if(picoquic_set_default_tp_value(endpoint->qc, parameters[i], bytes) != 0)
+				return -1;
+		}
+	}
+	const char *train = g_getenv("IMQUIC_PACKET_TRAIN_MODE");
+	if(train != NULL) {
+		if(strcmp(train, "0") && strcmp(train, "1")) {
+			IMQUIC_LOG(IMQUIC_LOG_ERR, "Invalid IMQUIC_PACKET_TRAIN_MODE (expected 0 or 1)\n");
+			return -1;
+		}
+		picoquic_set_packet_train_mode(endpoint->qc, !strcmp(train, "1"));
+	}
 	/* FIXME Does picoquic verify the cert by default? */
 	if(config->cert_no_verify)
 		picoquic_set_null_verifier(endpoint->qc);
@@ -210,6 +239,12 @@ int imquic_get_transport_metrics(imquic_connection *conn,
 	picoquic_prague_metrics_t prague = { 0 };
 	picoquic_get_default_path_quality(conn->piconn, &quality);
 	memset(metrics, 0, sizeof(*metrics));
+	metrics->packets_sent = quality.sent;
+	metrics->packets_lost = quality.lost;
+	metrics->spurious_losses = quality.spurious_losses;
+	metrics->timer_losses = quality.timer_losses;
+	metrics->max_reorder_delay_us = quality.max_reorder_delay;
+	metrics->max_reorder_gap = quality.max_reorder_gap;
 	metrics->smoothed_rtt_us = quality.rtt;
 	metrics->min_rtt_us = quality.rtt_min;
 	metrics->congestion_window_bytes = quality.cwin;
@@ -220,6 +255,13 @@ int imquic_get_transport_metrics(imquic_connection *conn,
 	imquic_mutex_lock(&conn->mutex);
 	metrics->queued_stream_bytes = conn->stream_bytes_queued > data_sent ?
 		conn->stream_bytes_queued - data_sent : 0;
+	metrics->send_state_time_us = conn->send_state_time_us;
+	metrics->output_streams = conn->send_state.output_streams;
+	metrics->ready_streams = conn->send_state.ready_streams;
+	metrics->flow_blocked_streams = conn->send_state.flow_blocked_streams;
+	metrics->picoquic_queued_bytes = conn->send_state.queued_bytes;
+	metrics->sendable_bytes = conn->send_state.sendable_bytes;
+	metrics->connection_credit_bytes = conn->send_state.connection_credit_bytes;
 	imquic_mutex_unlock(&conn->mutex);
 	metrics->pacing_rate_bytes_per_second = quality.pacing_rate;
 	if(picoquic_get_ecn_metrics(conn->piconn, &ecn) == 0) {
@@ -230,6 +272,8 @@ int imquic_get_transport_metrics(imquic_connection *conn,
 	if(picoquic_prague_get_metrics(conn->piconn, &prague) == 0) {
 		metrics->prague_alpha_numerator = prague.alpha_numerator;
 		metrics->prague_alpha_denominator = prague.alpha_denominator;
+		metrics->prague_pacing_interval_us = prague.pacing_interval_us;
+		metrics->pacing_quantum_bytes = prague.pacing_quantum_bytes;
 	}
 	return 0;
 }
@@ -304,13 +348,23 @@ gboolean imquic_quic_queued_event(imquic_connection *conn, imquic_connection_eve
 	return G_SOURCE_CONTINUE;
 }
 
+static void imquic_quic_timer_release(gpointer data) {
+	imquic_network_endpoint *endpoint = data;
+	imquic_refcount_decrease(&endpoint->ref);
+}
+
 /* Schedule the next picoquic lifecycle iteration */
 void imquic_quic_next_step(imquic_network_endpoint *endpoint) {
-	if(endpoint->timer != NULL)
-		g_source_destroy((GSource *)endpoint->timer);
-	int64_t wait_ns = picoquic_get_next_wake_delay(endpoint->qc, picoquic_current_time(), G_USEC_PER_SEC);
-	IMQUIC_LOG(IMQUIC_LOG_DBG, "[%s] Next wake delay: %"SCNi64"ns\n", endpoint->name, wait_ns);
-	endpoint->timer = imquic_loop_add_timer((wait_ns / 1000), (GSourceFunc)imquic_network_send_packet, endpoint);
+	imquic_mutex_lock(&endpoint->mutex);
+	if(!g_atomic_int_get(&endpoint->destroyed) && !g_atomic_int_get(&endpoint->stopping)) {
+		int64_t wait_us = picoquic_get_next_wake_delay(endpoint->qc, picoquic_current_time(), G_USEC_PER_SEC);
+		IMQUIC_LOG(IMQUIC_LOG_DBG, "[%s] Next wake delay: %"SCNi64"us\n", endpoint->name, wait_us);
+		imquic_refcount_increase(&endpoint->ref);
+		if(!imquic_loop_schedule_timer_us(&endpoint->timer, (guint64)MAX(wait_us, 0),
+				(GSourceFunc)imquic_network_send_packet, endpoint, imquic_quic_timer_release))
+			imquic_refcount_decrease(&endpoint->ref);
+	}
+	imquic_mutex_unlock(&endpoint->mutex);
 }
 
 /* picoquic callbacks */

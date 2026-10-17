@@ -15,6 +15,7 @@
 
 #include "moq-sub-options.h"
 #include "moq-utils.h"
+#include <errno.h>
 
 /* Command line options */
 static demo_options options = { 0 };

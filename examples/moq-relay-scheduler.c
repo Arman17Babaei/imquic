@@ -1,5 +1,17 @@
 #include "moq-relay-scheduler.h"
 
+gboolean imquic_demo_fetch_admission_cached(GHashTable *cache,
+		gpointer connection, imquic_demo_fetch_admission_reader reader,
+		gpointer user_data) {
+	gpointer value = g_hash_table_lookup(cache, connection);
+	if(value == NULL) {
+		gboolean admitted = reader(connection, user_data);
+		value = GINT_TO_POINTER(admitted ? 1 : 2);
+		g_hash_table_insert(cache, connection, value);
+	}
+	return GPOINTER_TO_INT(value) == 1;
+}
+
 static gboolean imquic_demo_fetch_object_in_range(
 		const imquic_moq_object *object,
 		const imquic_moq_location *start,
