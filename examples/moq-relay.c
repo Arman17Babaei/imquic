@@ -9,6 +9,7 @@
  */
 
 #include <arpa/inet.h>
+#include <unistd.h>
 
 #include <imquic/imquic.h>
 #include <imquic/moq.h>
@@ -46,6 +47,10 @@ static GHashTable *connections = NULL, *publishers = NULL, *subscribers = NULL,
 	*namespaces = NULL, *namespaces_by_prefix = NULL;
 static GList *monitors = NULL;
 static GList *fetches = NULL;
+/* Optional synchronous FETCH driver. QUIC remains the real local transport;
+ * this descriptor gates object selection, never packet timing or live runs. */
+static FILE *ideal_control = NULL;
+static gint ideal_cached_objects = 0;
 static guint64 admission_delay_us = 0;
 static guint64 admission_queue_bytes = 65536;
 
@@ -1811,6 +1816,8 @@ static void imquic_demo_incoming_object(imquic_connection *conn, imquic_moq_obje
 	/* Duplicate the object, in case we need it later for a FETCH */
 	imquic_mutex_lock(&track->mutex);
 	track->objects = g_list_prepend(track->objects, imquic_moq_object_duplicate(object));
+	if(ideal_control != NULL)
+		g_atomic_int_inc(&ideal_cached_objects);
 	/* Relay the object to all subscribers */
 	if(!options.quiet) {
 		IMQUIC_LOG(IMQUIC_LOG_INFO, "[%s] Relaying to %d subscribers\n",
@@ -1968,17 +1975,24 @@ int main(int argc, char *argv[]) {
 	if(!strcasecmp(options.congestion_control, "prague")) {
 		congestion_control = IMQUIC_CONGESTION_PRAGUE;
 		ecn_mode = IMQUIC_ECN_ECT1;
+	} else if(!strcasecmp(options.congestion_control, "bbr")) {
+		congestion_control = IMQUIC_CONGESTION_BBR;
+		ecn_mode = IMQUIC_ECN_ECT0;
+	} else if(!strcasecmp(options.congestion_control, "reno-ect0")) {
+		congestion_control = IMQUIC_CONGESTION_RENO;
+		ecn_mode = IMQUIC_ECN_ECT0;
 	} else if(!strcasecmp(options.congestion_control, "reno")) {
 		congestion_control = IMQUIC_CONGESTION_RENO;
 		ecn_mode = IMQUIC_ECN_NOT_ECT;
 	} else {
-		IMQUIC_LOG(IMQUIC_LOG_FATAL, "Invalid congestion control '%s' (expected prague or reno)\n",
+		IMQUIC_LOG(IMQUIC_LOG_FATAL, "Invalid congestion control '%s' (expected prague, reno, reno-ect0 or bbr)\n",
 			options.congestion_control);
 		ret = 1;
 		goto done;
 	}
 	IMQUIC_LOG(IMQUIC_LOG_INFO, "Congestion control: %s (%s)\n", options.congestion_control,
-		ecn_mode == IMQUIC_ECN_ECT1 ? "ECT(1)" : "Not-ECT");
+		ecn_mode == IMQUIC_ECN_ECT1 ? "ECT(1)" :
+		(ecn_mode == IMQUIC_ECN_ECT0 ? "ECT(0)" : "Not-ECT"));
 	if(options.transport_metrics != NULL) {
 		transport_metrics = fopen(options.transport_metrics, "w");
 		if(transport_metrics == NULL) {
@@ -2130,10 +2144,38 @@ int main(int argc, char *argv[]) {
 
 	/* Start the server */
 	imquic_start_endpoint(server);
+	const char *ideal_fd = g_getenv("IMQUIC_RELAY_IDEAL_FD");
+	if(ideal_fd != NULL) {
+		char *end = NULL;
+		long fd = strtol(ideal_fd, &end, 10);
+		if(end == ideal_fd || *end != '\0' || fd < 3 || fd > INT_MAX ||
+				(ideal_control = fdopen((int)fd, "r+")) == NULL) {
+			IMQUIC_LOG(IMQUIC_LOG_ERR, "Invalid IMQUIC_RELAY_IDEAL_FD\n");
+			stop = 1;
+		} else {
+			fputs("ready\n", ideal_control);
+			fflush(ideal_control);
+		}
+	}
 	gint64 next_metrics_us = g_get_monotonic_time();
 	GHashTable *admission_cache = g_hash_table_new(g_direct_hash, g_direct_equal);
 
 	while(!stop) {
+		if(ideal_control != NULL) {
+			char command[80];
+			if(fgets(command, sizeof(command), ideal_control) == NULL)
+				break;
+			unsigned count = 0;
+			if(sscanf(command, "cache %u", &count) == 1) {
+				while(!stop && (unsigned)g_atomic_int_get(&ideal_cached_objects) < count)
+					g_usleep(1000);
+				fprintf(ideal_control, "cached %d\n", g_atomic_int_get(&ideal_cached_objects));
+				fflush(ideal_control);
+				continue;
+			}
+			if(strcmp(command, "next\n"))
+				break;
+		}
 		imquic_mutex_lock(&mutex);
 		gint64 now_us = g_get_monotonic_time();
 		if(transport_metrics != NULL && now_us >= next_metrics_us) {
@@ -2172,6 +2214,10 @@ int main(int argc, char *argv[]) {
 				next_metrics_us = now_us + 100000;
 		}
 		if(fetches == NULL) {
+			if(ideal_control != NULL) {
+				fputs("empty\n", ideal_control);
+				fflush(ideal_control);
+			}
 			/* Nothing to do, just wait */
 			imquic_mutex_unlock(&mutex);
 			g_usleep(100000);
@@ -2201,7 +2247,7 @@ int main(int argc, char *argv[]) {
 					continue;
 				}
 				if(object != NULL && s->sub != NULL && s->sub->conn != NULL) {
-					if(!imquic_demo_fetch_admission_cached(admission_cache,
+					if(ideal_control == NULL && !imquic_demo_fetch_admission_cached(admission_cache,
 							s->sub->conn, imquic_demo_fetch_connection_admissible, NULL)) {
 						temp = temp->next;
 						continue;
@@ -2226,7 +2272,13 @@ int main(int argc, char *argv[]) {
 				outgoing.track_alias = best->track_alias;
 				outgoing.delivery = IMQUIC_MOQ_USE_FETCH;
 				outgoing.end_of_stream = completed;
-				imquic_moq_send_object(best->sub->conn, &outgoing);
+				int send_result = imquic_moq_send_object(best->sub->conn, &outgoing);
+				if(ideal_control != NULL) {
+					fprintf(ideal_control, "%s %"SCNu64" %"SCNu64" %zu %u\n",
+						send_result < 0 ? "error" : "object", outgoing.request_id,
+						outgoing.object_id, outgoing.payload_len, best->subscriber_priority);
+					fflush(ideal_control);
+				}
 				if(!best->cached_fetch)
 					imquic_moq_object_cleanup(best_object);
 				if(completed) {
@@ -2237,6 +2289,10 @@ int main(int argc, char *argv[]) {
 						g_hash_table_remove(best->sub->subscriptions_by_id, &best->request_id);
 				}
 			} else {
+				if(ideal_control != NULL) {
+					fputs("empty\n", ideal_control);
+					fflush(ideal_control);
+				}
 				imquic_mutex_unlock(&mutex);
 				g_usleep(1000);
 				continue;
@@ -2249,6 +2305,10 @@ int main(int argc, char *argv[]) {
 
 
 	g_hash_table_unref(admission_cache);
+	if(ideal_control != NULL) {
+		fclose(ideal_control);
+		ideal_control = NULL;
+	}
 	imquic_shutdown_endpoint(server);
 
 done:

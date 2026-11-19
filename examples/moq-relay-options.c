@@ -23,7 +23,7 @@ gboolean demo_options_parse(demo_options *options, int argc, char *argv[]) {
 		{ "bind", 'b', 0, G_OPTION_ARG_STRING, &options->ip, "Local IP address to bind to (default=all interfaces)", "IP" },
 		{ "port", 'p', 0, G_OPTION_ARG_INT, &options->port, "Local port to bind to (default=0, random)", "port" },
 		{ "congestion-control", 'g', 0, G_OPTION_ARG_STRING, &options->congestion_control,
-			"Congestion control and ECN mode (prague=ECT(1), reno=Not-ECT; default=reno)", "prague|reno" },
+			"Congestion control and ECN mode (prague=ECT(1), reno=Not-ECT, reno-ect0=ECT(0), bbr=ECT(0); default=reno)", "prague|reno|reno-ect0|bbr" },
 		{ "transport-metrics", 'm', 0, G_OPTION_ARG_STRING, &options->transport_metrics,
 			"Write 100ms sender transport samples for subscriber connections", "path.csv" },
 		{ "raw-quic", 'q', 0, G_OPTION_ARG_NONE, &options->raw_quic, "Whether raw QUIC should be offered for MoQ connections or not (default=no)", NULL },

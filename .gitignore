@@ -69,3 +69,7 @@ results/l4s/
 picoquic
 
 imquic-loop-timer-test
+
+# Python analyzer caches
+__pycache__/
+*.pyc
